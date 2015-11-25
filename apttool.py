@@ -7,7 +7,8 @@
 """
 
 
-from datetime import datetime      # timing, log parsing
+from collections import UserList   # PackageVersions class.
+from datetime import datetime      # timing, log parsing.
 from enum import Enum              # install states.
 import os.path                     # for file/dir
 import re                          # search pattern matching
@@ -33,11 +34,20 @@ except ImportError as eximp:
 try:
     from docopt import docopt        # cmdline arg parser
 except ImportError as exdoc:
-    print('\nDocopt must be installed, '
-          'try: pip install docopt.\n\n{}'.format(exdoc))
+    print(
+        '\nDocopt must be installed, try: pip install docopt.\n\n{}'.format(
+            exdoc))
     sys.exit(1)
 
-__version__ = '0.3.2'
+try:
+    from colr import Colr as C
+except ImportError as excolr:
+    print(
+        '\nColr must be installed, try: pip install colr\n\n{}'.format(
+            excolr))
+    sys.exit(1)
+
+__version__ = '0.4.0'
 NAME = 'AptTool'
 
 # Get short script name.
@@ -311,16 +321,22 @@ def format_pkg(result, no_desc=False, no_ver=False):
     """
 
     # name formatting
-    pkgname = '[{}] {:<30}'.format(
-        'i' if get_install_state(result) else 'u',
-        result.name)
+    if get_install_state(result):
+        marker = C('[i]', fore='green', style='bright')
+    else:
+        marker = C('[u]')
+    pkgname = C(' ').join(
+        marker,
+        format_pkg_name(result.name.ljust(30))
+    )
 
     # No description needed RETURN only the name....
     if no_desc:
         if no_ver:
             return pkgname
         # Give an extra 50 chars for the pkgname since no desc is needed.
-        return '{:<50} {}'.format(pkgname, get_latest_ver(result))
+        verfmt = C(get_latest_ver(result), fore='blue')
+        return '{:<50} {}'.format(pkgname, verfmt)
 
     # Get Package Description....
     pkgdesc_full = get_pkg_description(result)
@@ -328,7 +344,8 @@ def format_pkg(result, no_desc=False, no_ver=False):
     if not pkgdesc_full:
         return pkgname
 
-    padlen = len(pkgname) + 3
+    # Padlen is the length of the package name, marker, and ' : ' separator.
+    padlen = 37
     descmax = 80 - padlen
     padding = ' ' * padlen
     if len(pkgdesc_full) <= descmax:
@@ -336,9 +353,10 @@ def format_pkg(result, no_desc=False, no_ver=False):
         pkgdesc = pkgdesc_full
         if not no_ver:
             # Add a second line for the version.
+            verfmt = C(get_latest_ver(result), fore='blue')
             pkgdesc = '\n'.join((
                 pkgdesc_full,
-                '    {}'.format(get_latest_ver(result))
+                '    {}'.format(verfmt)
             ))
     else:
         pkgdesc = format_block(
@@ -349,12 +367,14 @@ def format_pkg(result, no_desc=False, no_ver=False):
         )
         if not no_ver:
             pkglines = pkgdesc.splitlines()
-            pkgver = '    {}'.format(get_latest_ver(result))
+            verstr = get_latest_ver(result)
+            verfmt = C(verstr, fore='blue')
+            pkgver = '    {}'.format(verfmt)
             if len(pkglines) > 1:
                 # Replace part of the second line with the version.
                 pkglines[1] = ''.join((
                     pkgver,
-                    pkglines[1][len(pkgver):]
+                    pkglines[1][len(verstr) + 4:]
                 ))
             else:
                 # Add a second line for the version.
@@ -365,80 +385,12 @@ def format_pkg(result, no_desc=False, no_ver=False):
     if len(pkgdesc) > 188:
         pkgdesc = '{}...'.format(pkgdesc[:185].rstrip())
 
-    return ' : '.join((pkgname, pkgdesc))
+    return C(' : ').join(pkgname, pkgdesc)
 
 
-def format_pkg_OLD(result, no_desc=False, no_ver=False):
-    """ prints a single search result to the console
-
-        Keyword Arguments:
-            no_desc : If True, only prints state and name.
-            no_ver  : If True, print package version also (even with no_desc).
-    """
-
-    # max text lengths
-    desc_max = 46
-    # name formatting
-    pkgname = '[{}] {:<30}'.format(
-        'i' if get_install_state(result) else 'u',
-        result.name)
-
-    # No description needed RETURN only the name....
-    if no_desc:
-        if no_ver:
-            return pkgname
-        # Give an extra 50 chars for the pkgname since no desc is needed.
-        return '{:<50} {}'.format(pkgname, get_latest_ver(result))
-
-    # Get Package Description....
-    pkgdesc_full = get_pkg_description(result)
-    # No description to search?
-    if not pkgdesc_full:
-        return pkgname
-
-    # description slicing, remove newlines
-    if '\n' in pkgdesc_full:
-        pkgdesc_full = pkgdesc_full[:pkgdesc_full.index('\n')]
-
-    if len(pkgdesc_full) <= desc_max:
-        # already short description
-        pkgdesc = pkgdesc_full
-    else:
-        # trim to 2 lines worth, or use first sentence.
-        pkgdesc_full = pkgdesc_full[:(desc_max * 2)]
-        if '.' in pkgdesc_full:
-            # use first sentance.
-            pkgline = pkgdesc_full[:pkgdesc_full.index('.') + 1]
-        else:
-            # set up to use two lines of text.
-            pkgline = pkgdesc_full
-        padding = (' ' * (len(pkgname) + 3))
-        pkgdesc_lines = [
-            pkgline[:desc_max],
-            '{}{}'.format(padding, pkgline[desc_max:].strip()[:-4]),
-        ]
-
-        if not pkgdesc_lines[1].strip():
-            # One line description.
-            if no_ver:
-                pkgdesc = pkgdesc_lines[0]
-            else:
-                # Add a second line for the version.
-                pkgdesc = '\n'.join((
-                    pkgdesc_lines[0],
-                    '    {}'.format(get_latest_ver(result))
-                ))
-        else:
-            if not no_ver:
-                # Replace part of the second line with the latest version.
-                pkgver = '    {}'.format(get_latest_ver(result))
-                pkgdesc_lines[1] = ''.join((
-                    pkgver,
-                    pkgdesc_lines[1][len(pkgver):]
-                ))
-            pkgdesc = '{}...'.format('\n'.join(pkgdesc_lines))
-
-    return ' : '.join((pkgname, pkgdesc))
+def format_pkg_name(s):
+    """ Colorize a package name. """
+    return str(C(s, fore='magenta', style='bright'))
 
 
 def get_actual_package(possiblepkg):
@@ -843,11 +795,19 @@ def package_exists(pname, print_missing=True):
         Prints a message if the package exists.
         Returns True for existing package, False for missing package.
     """
-    if pname.lower().strip() in cache_main:
-        print('{}: exists'.format(pname.rjust(20)))
+    pname = pname.lower().strip()
+    if pname in cache_main:
+        print(C(': ').join(
+            format_pkg_name(pname.rjust(20)),
+            C('exists', fore='green')
+        ))
         return True
     if print_missing:
-        print('{}: missing'.format(pname.rjust(20)))
+        print(C(': ').join(
+            C(pname.rjust(20), fore='red', style='bright'),
+            C('missing', fore='red')
+        ))
+
     return False
 
 
@@ -939,52 +899,20 @@ def print_package_version(pkgname, allversions=False):
         return 1
 
     package = cache_main[pkgname]
-
-    if not hasattr(package, 'versions'):
-        print(''.join(['\nUnable to retrieve versions for ',
-                       '{}'.format(pkgname),
-                       ', apt/apt_pkg may be out of date.']))
+    try:
+        versions = PackageVersions(package)
+    except (TypeError, ValueError):
+        print(''.join((
+            '\nUnable to retrieve versions for {}, ',
+            'apt/apt_pkg may be out of date.')).format(pkgname))
         return 1
 
-    versions = [v.version for v in package.versions]
-    if package.installed:
-        installedver = package.installed.version
-    else:
-        installedver = None
-
-    latestver = versions[0]
-    latestinstalled = latestver == installedver
-    versions[0] = '{} (latest)'.format(latestver)
-    versions = ['{} (installed)'.format(v)
-                if v.split()[0] == installedver else v for v in versions]
-
     if allversions:
-        verlen = len(versions)
-        plural = 'version' if verlen == 1 else 'versions'
-        print('\nFound {} {} for: {}'.format(
-            verlen,
-            plural,
-            package.name))
-        print('    {}'.format('\n    '.join(versions)))
+        print(versions.formatted_all())
     else:
-        print('\nVersion:')
-        if latestinstalled:
-            fmtargs = package.name, installedver
-            print('    {} {} (latest version is installed)\n'.format(*fmtargs))
-        elif installedver:
-            fmtargs = package.name, installedver, latestver
-            fmtline = '    {} {} installed, latest version is: {}\n'
-            print(fmtline.format(*fmtargs))
-        else:
-            fmtargs = package.name, latestver
-            print('    {} {} (latest version available)\n'.format(*fmtargs))
+        print(versions.formatted())
 
-    pkgdesc = format_block(
-        get_pkg_description(package),
-        maxwidth=76,
-        newlines=True,
-        prepend='    ')
-    print('Description:\n{}\n'.format(pkgdesc))
+    print(versions.format_desc())
 
     return 0
 
@@ -1657,6 +1585,95 @@ class HistoryLine(object):
             if repat.search(targetstr):
                 return True
         return False
+
+
+class PackageVersions(UserList):
+
+    def __init__(self, pkg):
+        """ Initialize version info for a single package. """
+        self.package = pkg
+        if not hasattr(pkg, 'versions'):
+            raise TypeError('Expecting a Package with a `versions` attribute.')
+
+        self.data = [v.version for v in pkg.versions]
+        if pkg.installed:
+            self.installed = pkg.installed.version
+        else:
+            self.installed = None
+        if not self.data:
+            raise ValueError('Empty `versions` attribute for Package.')
+        self.latest = self.data[0]
+
+    def formatted(self):
+        """ Return a formatted string for the latest/installed version. """
+        if self.latest == self.installed:
+            verstr = C(' ').join(
+                C(self.installed, fore='green'),
+                C('latest version is installed', fore='green').join('(', ')')
+            )
+        elif self.installed:
+            # Installed, but warn about not being the latest version.
+            verstr = C(' ').join(
+                C(self.installed, fore='green'),
+                (C('installed', fore='green')
+                    .reset(', latest version is: ')
+                    .yellow(self.latest))
+            )
+        else:
+            verstr = C(' ').join(
+                C(self.latest, fore='red'),
+                C('latest version available', fore='red').join('(', ')')
+            )
+        return 'Version:\n    {} {}'.format(
+            self.format_name(),
+            verstr)
+
+    def formatted_all(self):
+        """ Return a formatted string for all versions. """
+        length = len(self)
+        plural = 'version' if length == 1 else 'versions'
+        return '\n'.join((
+            '\nFound {} {} for: {}'.format(
+                C(str(length), fore='blue'),
+                plural,
+                self.format_name()),
+            '    {}'.format('\n    '.join(
+                self.format_ver(v) for v in self))
+        ))
+
+    def format_desc(self):
+        """ Return a formatted description for the package version. """
+        return '\nDescription:\n{}\n'.format(
+            format_block(
+                get_pkg_description(self.package),
+                maxwidth=76,
+                newlines=True,
+                prepend='    '))
+
+    def format_name(self):
+        """ Colorize the name for this package. """
+        return format_pkg_name(self.package.name)
+
+    def format_ver(self, s):
+        """ Color-code a single version number according to it's install state.
+        """
+        verstr = None
+        if s == self.latest:
+            verstr = C(' ').join(
+                C(s, fore='blue'),
+                C('latest', fore='blue').join('(', ')')
+            )
+        if s == self.installed:
+            if not verstr:
+                verstr = C(s, fore='green', style='bright')
+            verstr = C(' ').join(
+                verstr,
+                C('installed', fore='green').join('(', ')')
+            )
+        if verstr:
+            return str(verstr)
+        # Not latest, or not installed.
+        return str(C(s, fore='red'))
 
 # custom progress reporters
 oprogress = SimpleOpProgress()
