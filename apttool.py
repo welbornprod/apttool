@@ -12,6 +12,7 @@ from datetime import datetime      # timing, log parsing.
 from enum import Enum              # install states.
 import os.path                     # for file/dir
 import re                          # search pattern matching
+import stat                        # checking for executables
 import sys                         # for args (Scriptname)
 import weakref                     # for IterCache()
 
@@ -47,7 +48,7 @@ except ImportError as excolr:
             excolr))
     sys.exit(1)
 
-__version__ = '0.4.0'
+__version__ = '0.4.1'
 NAME = 'AptTool'
 
 # Get short script name.
@@ -59,7 +60,7 @@ USAGESTR = """{name} v. {version}
         {script} -c file [-n]
         {script} -i package
         {script} -d package | -p package
-        {script} -e package | -f package
+        {script} (-e package... | -f package...) [-s]
         {script} (-P package | -R package) [-I | -N]
         {script} -H [QUERY] [COUNT]
         {script} -h | -v
@@ -87,6 +88,9 @@ USAGESTR = """{name} v. {version}
                                        It just shows files installed to
                                        /bin directories.
         -f pkg,--files pkg           : Show installed files for package.
+                                       Multiple package names may be
+                                       comma-separated, or passed with multiple
+                                       flags.
         -h,--help                    : Show this help message and exit.
         -H,--history                 : Show package history.
                                        (installs, uninstalls, etc.)
@@ -109,7 +113,8 @@ USAGESTR = """{name} v. {version}
         -p pkg,--purge pkg           : Purge the package completely,
                                        remove all configuration.
         -P pkg,--dependencies pkg    : List all dependencies for a package.
-        -s,--short                   : When searching, don't print the
+        -s,--short                   : Use shorter output.
+                                       When searching, don't print the
                                        description.
         -R pkg,--reversedeps pkg     : Show reverse dependencies.
         -r,--reverse                 : When searching, return packages that
@@ -288,6 +293,24 @@ def dependencies(pkgname, installstate=None):
 
     print('\nTotal ({}): {}'.format(installstate, total))
     return 0 if total > 0 else 1
+
+
+def flatten_args(args, allow_dupes=False):
+    """ Flatten any comma separated args, mixed with regular args, into a
+        single tuple.
+        Example:
+            flatten_arg_list(['test', 'this,thing', 'out, right, here'])
+            # ['test', 'this', 'thing', 'out', 'right', 'here']
+    """
+    if allow_dupes:
+        flat = list()
+        for arg in args:
+            flat.extend(s.strip() for s in arg.split(','))
+    else:
+        flat = set()
+        for arg in args:
+            flat.update(s.strip() for s in arg.split(','))
+    return tuple(flat)
 
 
 def format_block(
@@ -561,6 +584,22 @@ def install_package(pkgname, doupdate=False):
         print('\nCan\'t find a package by that name: {}'.format(pkgname))
         return 1
     return 0
+
+
+def is_executable(filename):
+    """ Return True if the file is executable.
+        Returns False on errors.
+    """
+
+    try:
+        st = os.stat(filename)
+    except EnvironmentError as ex:
+        print_err(
+            'Error checking executable stat: {}\n{}'.format(filename, ex))
+        return False
+    return (
+        stat.S_ISREG(st.st_mode) and
+        st.st_mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH))
 
 
 def is_pkg_match(re_pat, pkg, **kwargs):
@@ -845,48 +884,62 @@ def print_err(*args, **kwargs):
     return print(*args, **kwargs)
 
 
-def print_installed_files(pkgname, execs_only=False):
+def print_installed_files(pkgname, execs_only=False, short=False):
     """ Print a list of installed files for a package. """
-    print('\nGetting installed {} for \'{}\'\n'.format(
+    status = (lambda s: None) if short else print
+
+    status('\nGetting installed {} for \'{}\'\n'.format(
         'executables' if execs_only else 'files',
         pkgname))
     if pkgname not in cache_main.keys():
-        print('\nCan\'t find a package with that name: {}'.format(pkgname))
+        print_err('\nCan\'t find a package with that name: {}'.format(pkgname))
         return 1
     package = cache_main[pkgname]
 
     if not get_install_state(package):
-        print(''.join(['\nThis package is not installed: ',
-                       '{}'.format(package.name),
-                       '\nCan\'t get installed files for ',
-                       'uninstalled packages.']))
+        print_err(''.join((
+            '\nThis package is not installed: {}',
+            '\nCan\'t get installed files for ',
+            'uninstalled packages.')).format(package.name))
         return 1
 
     if not hasattr(package, 'installed_files'):
-        print(''.join(['\nUnable to get installed files for ',
-                       '{}'.format(package.name),
-                       ', apt/apt_pkg module may be out of date.']))
+        print_err(''.join((
+            '\nUnable to get installed files for {}',
+            ', apt/apt_pkg module may be out of date.'
+        )).format(package.name))
         return 1
 
-    files = sorted(package.installed_files)
+    files = sorted(fname for fname in package.installed_files if fname)
     if execs_only:
         # Show executables only (/bin directory files.)
         # Returns true for a path if it looks like an executable.
-        is_exec = lambda s: ('/bin' in s) and (not s.endswith('/bin'))
-        files = [s for s in files if is_exec(s)]
-        label = 'executables'
+        # is_exec = lambda s: ('/bin' in s) and (not s.endswith('/bin'))
+        files = [fname for fname in files if is_executable(fname)]
+        label = 'executable' if len(files) == 1 else 'executables'
     else:
         # Show installed files.
-        label = 'installed files'
+        label = 'installed file' if len(files) == 1 else 'installed files'
 
     if files:
-        print('Found {} {} for {}:'.format(len(files), label, package.name))
-        print('    {}\n'.format('\n    '.join(sorted(files))))
+        status('Found {} {} for {}:'.format(len(files), label, package.name))
+        if short:
+            print('\n'.join(sorted(files)))
+        else:
+            print('    {}\n'.format('\n    '.join(sorted(files))))
         return 0
 
     # No files found (possibly after trimming to only executables)
-    print('Found 0 {} for: {}'.format(label, package.name))
+    print_err('Found 0 {} for: {}'.format(label, package.name))
     return 1
+
+
+def print_installed_files_multi(pkgnames, execs_only=False, short=False):
+    """ Use print_installed_files over a list of package names. """
+    return sum(
+        print_installed_files(name, execs_only=execs_only, short=short)
+        for name in flatten_args(pkgnames)
+    )
 
 
 def print_package_version(pkgname, allversions=False):
@@ -1024,15 +1077,16 @@ def run_preload_cmd(argd):
     """
     global cache_main
 
+    status = (lambda s: None) if argd['--short'] else print
     # Initialize
-    print('Loading APT Cache...')
+    status('Loading APT Cache...')
     cache_main = apt.Cache()
     if not cache_main:
-        print('Failed to load apt cache!')
+        print_err('Failed to load apt cache!')
         return 1
 
     # Cache was loaded properly.
-    print('Loaded {} packages.'.format(len(cache_main)))
+    status('Loaded {} packages.'.format(len(cache_main)))
 
     funcmap = {
         '--containsfile': {
@@ -1053,13 +1107,14 @@ def run_preload_cmd(argd):
             'kwargs': {'purge': bool(argd['--purge'])}
         },
         '--executables': {
-            'func': print_installed_files,
+            'func': print_installed_files_multi,
             'args': (argd['--executables'],),
-            'kwargs': {'execs_only': True}
+            'kwargs': {'execs_only': True, 'short': argd['--short']}
         },
         '--files': {
-            'func': print_installed_files,
-            'args': (argd['--files'],)
+            'func': print_installed_files_multi,
+            'args': (argd['--files'],),
+            'kwargs': {'short': argd['--short']}
         },
         '--install': {
             'func': install_package,
@@ -1335,14 +1390,20 @@ class IterCache(apt.Cache):
         self._records = None
         self._list = None
         self._callbacks = {}
+        self._callbacks2 = {}
         self._weakref = weakref.WeakValueDictionary()
         self._set = set()
         self._fullnameset = set()
         self._changes_count = -1
         self._sorted_set = None
+        if hasattr(self, 'connect2'):
+            # Use newer method in case of reference cycles.
+            self.connect2('cache_post_open', apt.Cache._inc_changes_count)
+            self.connect2('cache_post_change', apt.Cache._inc_changes_count)
+        else:
+            self.connect('cache_post_open', self._inc_changes_count)
+            self.connect('cache_post_change', self._inc_changes_count)
 
-        self.connect('cache_post_open', self._inc_changes_count)
-        self.connect('cache_post_change', self._inc_changes_count)
         if memonly:
             # force apt to build its caches in memory
             apt_pkg.config.set('Dir::Cache::pkgcache', '')
@@ -1693,10 +1754,10 @@ if __name__ == '__main__':
     try:
         ret = main(main_argd)
     except KeyboardInterrupt:
-        print('\nUser cancelled.\n')
+        print_err('\nUser cancelled.\n')
         ret = 2
     # Report how long it took
     duration = (datetime.now() - start_time).total_seconds()
-    print(str(duration)[:5] + 's')
+    print_err(str(duration)[:5] + 's')
 
     sys.exit(ret)
