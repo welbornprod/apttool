@@ -77,7 +77,7 @@ USAGESTR = """{name} v. {version}
         {script} -c file [-C] [-n] [-q]
         {script} (-i | -d | -p) PACKAGES... [-C] [-q]
         {script} (-e | -f | -S) PACKAGES... [-C] [-q] [-s]
-        {script} (-P | -R) PACKAGES... [-C] [-I | -N] [-q]
+        {script} (-P | -R) PACKAGES... [-C] [-I | -N] [-q] [-s]
         {script} -H [QUERY] [COUNT] [-C] [-q]
         {script} -h | -v
         {script} (-l | -L) PACKAGES... [-C] [-q]
@@ -247,14 +247,78 @@ def cache_get(self, item, default=NoValue):
     return val
 
 
-def cmd_dependencies(pkgname, installstate=None):
+def cmd_contains_file(name, shortnamesonly=False):
+    """ Search all installed files for a filename.
+        Print packages containing matches.
+        Arguments:
+            name            : Name or part of a name to search for
+
+        Keyword Arguments:
+            shortnamesonly  : don't include the full path in search,
+                              just the short file name.
+    """
+
+    try:
+        repat = re.compile(name)
+    except Exception as ex:
+        print_err('\nInvalid search term!: {}\n{}'.format(name, ex))
+        return 1
+
+    # Setup filename methods (long or short, removes an 'if' from the loop.)
+    def getfilenameshort(s):
+        return os.path.split(s)[1]
+    # Pick filename retrieval function..
+    filenamefunc = getfilenameshort if shortnamesonly else str
+
+    # Iterate all packages...
+    totalpkgs = 0
+    totalfiles = 0
+
+    for pkgname in cache_main.keys():
+        pkg = cache_main[pkgname]
+        matchingfiles = []
+        if not pkg_install_state(pkg):
+            continue
+        if not hasattr(pkg, 'installed_files'):
+            print_err(
+                '\n'.join((
+                    '\nUnable to retrieve installed files for {},',
+                    'apt/apt_pkg may be out of date!'
+                )).format(pkgname)
+            )
+            return 1
+
+        for installedfile in (pkg.installed_files or []):
+            shortname = filenamefunc(installedfile)
+            rematch = repat.search(shortname)
+            if rematch:
+                # Save match for report,
+                # (report when we're finished with this package.)
+                matchingfiles.append(installedfile)
+
+        # Report any matches.
+        if matchingfiles:
+            totalpkgs += 1
+            totalfiles += len(matchingfiles)
+            print(pkg_format(pkg, no_desc=True, no_marker=True))
+            print('    {}'.format('\n    '.join(matchingfiles)))
+
+    print_status(
+        '\nFound {} files in {} packages.'.format(totalfiles, totalpkgs)
+    )
+    return 0
+
+
+def cmd_dependencies(pkgname, installstate=None, short=False):
     """ Print all dependencies for a package.
         Optionally, filter by installed or uninstalled.
         Arguments:
             pkgname       : (str) Package name to check dependencies for.
             installstate  : InstallStateFilter, to filter dependency list.
                             Default: InstallStateFilter.every
+            short         : Use shorter output.
     """
+    status = noop if short else print_status
     installstate = installstate or InstallStateFilter.every
 
     package = cache_main.get(pkgname, None)
@@ -267,19 +331,26 @@ def cmd_dependencies(pkgname, installstate=None):
             pkg_install_state(dep.name, expected=installstate))
     total = 0
     for pkgver in package.versions:
-        print_status(
+        status(
             '\n{} dependencies for {} v. {}'.format(
                 str(installstate).title(),
                 package.name,
                 pkgver.version))
         for deplst in pkgver.dependencies:
             for dep in filter(is_match, deplst):
-                print('    {d.name:<40} {d.relation} {d.version}:'.format(
-                    d=dep
-                ))
+                deppkg, ver, rel = dependency_info(dep, default=dep.name)
+                print(
+                    pkg_format(
+                        deppkg,
+                        no_ver=short,
+                        no_desc=short,
+                        use_version=ver,
+                        use_relation=rel
+                    )
+                )
                 total += 1
 
-    print_status('\nTotal ({}): {}'.format(installstate, total))
+    status('\nTotal ({}): {}'.format(installstate, total))
     return 0 if total > 0 else 1
 
 
@@ -524,14 +595,16 @@ def cmd_remove(pkgname, purge=False):
         return 1
 
 
-def cmd_reverse_dependencies(pkgname, installstate=None):
+def cmd_reverse_dependencies(pkgname, installstate=None, short=False):
     """ Print all reverse dependencies for a package.
         Optionally, filter by installed or uninstalled.
         Arguments:
             pkgname       : (str) Package name to check dependencies for.
             installstate  : InstallStateFilter, to filter dependency list.
                             Default: InstallStateFilter.every
+            short         : Use shorter output.
     """
+    status = noop if short else print_status
     installstate = installstate or InstallStateFilter.every
     try:
         package = cache_main[pkgname]
@@ -539,24 +612,20 @@ def cmd_reverse_dependencies(pkgname, installstate=None):
         print_missing_pkg(pkgname)
         return 1
 
-    print_status('\nSearching for {} dependents on {}...'.format(
+    status('\nSearching for {} dependents on {}...'.format(
         installstate,
         package.name))
     total = 0
     for pkg in cache_main:
+        if not pkg_install_state(pkg, expected=installstate):
+            continue
         for pkgver in pkg.versions:
             for deplst in pkgver.dependencies:
                 for dep in filter(lambda d: d.name == package.name, deplst):
-                    if not pkg_install_state(pkg, expected=installstate):
-                        continue
-                    print(
-                        '    {p.name:<40} {v.version}'.format(
-                            p=pkg,
-                            v=pkgver
-                        ))
+                    print(pkg_format(pkg, no_ver=short, no_desc=short))
                     total += 1
 
-    print_status('\nTotal ({}): {}'.format(installstate, total))
+    status('\nTotal ({}): {}'.format(installstate, total))
     return 0 if total > 0 else 1
 
 
@@ -746,7 +815,7 @@ def cmdmap_build(argd):
     """ Return a map of {cmdline_option: function_info}. """
     funcmap = {
         '--containsfile': {
-            'func': search_file,
+            'func': cmd_contains_file,
             'args': (argd['--containsfile'],),
             'kwargs': {'shortnamesonly': argd['--names']}
         },
@@ -757,7 +826,8 @@ def cmdmap_build(argd):
                 argd['PACKAGES']
             ),
             'kwargs': {
-                'installstate': InstallStateFilter.from_argd(argd)
+                'installstate': InstallStateFilter.from_argd(argd),
+                'short': argd['--short']
             }
         },
         '--delete': {  # --purge
@@ -810,7 +880,8 @@ def cmdmap_build(argd):
                 argd['PACKAGES']
             ),
             'kwargs': {
-                'installstate': InstallStateFilter.from_argd(argd)
+                'installstate': InstallStateFilter.from_argd(argd),
+                'short': argd['--short']
             }
         },
         '--suggests': {
@@ -838,6 +909,20 @@ def cmdmap_build(argd):
     funcmap['--purge'] = funcmap['--delete']
     funcmap['--LOCATE'] = funcmap['--locate']
     return funcmap
+
+
+def dependency_info(dep, default=None):
+    """ Get the actual Package, version, and relation for a Dependency.
+        Returns a tuple of (Package/`default`, dep.version, dep.relation).
+        Arguments:
+            dep      : Dependency object to get info for.
+            default  : Returned as `deppkg` when an actual Package can't be
+                       found.
+    """
+    deppkg = cache_main.get(strip_arch(dep.name), default)
+    deprel = getattr(dep, 'relation', None) or ''
+    depver = getattr(dep, 'version', None) or ''
+    return deppkg, depver, deprel
 
 
 def flatten_args(args, allow_dupes=False):
@@ -1228,59 +1313,88 @@ def parse_packages_arg(names):
             yield pname
 
 
-def pkg_format(pkg, no_desc=False, no_ver=False, indent=0):
+def pkg_format(
+        pkg, no_desc=False, no_ver=False, no_marker=False, indent=0,
+        use_version=None, use_relation=None):
     """ Formats a single search result, using colors.
 
         Arguments:
-            pkg     : Package object to format.
-            no_desc : If True, only prints state and name.
-                      Default: False
-            no_ver  : If True, print package version also (even with no_desc).
-                      Default: False
-            indent  : Number of spaces to indent the final line.
-                      Default: 0
+            pkg          : Package object to format.
+            no_desc      : If True, only prints state and name.
+                           Default: False
+            no_ver       : If True, print package version also
+                           (even with no_desc).
+                           Default: False
+            no_marker    : If True, do not print the install state marker.
+            indent       : Number of spaces to indent the final line.
+                           Default: 0
+            use_version  : Print this version number instead of grabbing the
+                           latest/installed version.
+            use_relation : Print this version relation (for dependencies).
+                           (=, >=, ~, etc.).
     """
     missing = False
+    name_len = 35
+    separator = ' : '
+
     # name formatting
     if isinstance(pkg, str):
         # Just a name was passed in, because the cache didn't contain this
         # known package. ..Happens when printing dependencies (python3-flup?).
-        marker = C('[?]', fore='red', style='bright')
+        marker = '' if no_marker else C('[?]', fore='red', style='bright')
         pkgname = pkg
         missing = True
     elif pkg_install_state(pkg):
-        marker = C('[i]', fore='green', style='bright')
+        marker = '' if no_marker else C('[i]', fore='green', style='bright')
         pkgname = pkg.name
     else:
-        marker = C('[u]')
+        marker = '' if no_marker else C('[u]')
         pkgname = pkg.name
-    pkgname = C(' ').join(
-        marker,
-        pkg_format_name(pkgname.ljust(30))
-    )
+    pkgname = pkg_format_name(pkgname.ljust(name_len))
+    if not no_marker:
+        pkgname = C(' ').join(
+            marker,
+            pkgname
+        )
+
+    # Get Package Version/Description....
+    if missing:
+        pkgdesc_full = 'This package cannot be found in the cache.'
+        verstr = '(missing)'
+        verlen = len(verstr)
+        relation = ''
+        verfmt = C(verstr, fore='red')
+    else:
+        pkgdesc_full = get_pkg_description(pkg)
+        verstr = use_version if use_version else get_latest_ver(pkg)
+        relation = use_relation or ''
+        if relation:
+            verfmt = '{} {}'.format(
+                C(relation, fore='green'),
+                C(verstr, fore='blue')
+            )
+        else:
+            verfmt = C(verstr, fore='blue')
+
+        verlen = len(strip_codes(verfmt))
 
     # No description needed/available RETURN only the name.
     if no_desc:
         if no_ver:
             return pkgname
         # Give an extra 50 chars for the pkgname since no desc is needed.
-        if missing:
-            verfmt = C('(missing)', fore='red')
-        else:
-            verfmt = C(get_latest_ver(pkg), fore='blue')
         return '{:<50} {}'.format(pkgname, verfmt)
 
-    # Get Package Description....
-    if missing:
-        pkgdesc_full = 'This package cannot be found in the cache.'
-    else:
-        pkgdesc_full = get_pkg_description(pkg)
     # No description available?
     if not pkgdesc_full:
         return pkgname
 
-    # Padlen is the length of the package name, marker, and ' : ' separator.
-    padlen = 37 + indent
+    # Padlen is how far extended descriptions should be padded.
+    padlen = indent + name_len + len(strip_codes(marker)) + len(separator)
+    # The +1 is for a space between the marker and the name.
+    if not no_marker:
+        padlen += 1
+
     descmax = TERM_WIDTH - padlen
     padding = ' ' * padlen
     if len(pkgdesc_full) <= descmax:
@@ -1288,10 +1402,6 @@ def pkg_format(pkg, no_desc=False, no_ver=False, indent=0):
         pkgdesc = pkgdesc_full
         if not no_ver:
             # Add a second line for the version.
-            if missing:
-                verfmt = C('(missing)', fore='red')
-            else:
-                verfmt = C(get_latest_ver(pkg), fore='blue')
             pkgdesc = '\n'.join((
                 pkgdesc_full,
                 '    {}'.format(verfmt)
@@ -1305,17 +1415,12 @@ def pkg_format(pkg, no_desc=False, no_ver=False, indent=0):
         )
         if not no_ver:
             pkglines = pkgdesc.splitlines()
-            verstr = get_latest_ver(pkg)
-            if missing:
-                verfmt = C('(missing)', fore='red')
-            else:
-                verfmt = C(verstr, fore='blue')
             pkgver = '    {}'.format(verfmt)
             if len(pkglines) > 1:
                 # Replace part of the second line with the version.
                 pkglines[1] = ''.join((
                     pkgver,
-                    pkglines[1][len(verstr) + 4:]
+                    pkglines[1][verlen + 4:]
                 ))
             else:
                 # Add a second line for the version.
@@ -1329,7 +1434,7 @@ def pkg_format(pkg, no_desc=False, no_ver=False, indent=0):
     # Return the final line, indent if needed.
     return ''.join((
         ' ' * indent,
-        str(C(' : ').join(pkgname, pkgdesc))
+        str(C(separator).join(pkgname, pkgdesc))
     ))
 
 
@@ -1472,68 +1577,6 @@ def run_preload_cmd(argd):
             )
 
 
-def search_file(name, shortnamesonly=False):
-    """ Search all installed files for a filename.
-        Print packages containing matches.
-        Arguments:
-            name            : Name or part of a name to search for
-
-        Keyword Arguments:
-            shortnamesonly  : don't include the full path in search,
-                              just the short file name.
-    """
-
-    try:
-        repat = re.compile(name)
-    except Exception as ex:
-        print_err('\nInvalid search term!: {}\n{}'.format(name, ex))
-        return 1
-
-    # Setup filename methods (long or short, removes an 'if' from the loop.)
-    def getfilenameshort(s):
-        return os.path.split(s)[1]
-    # Pick filename retrieval function..
-    filenamefunc = getfilenameshort if shortnamesonly else str
-
-    # Iterate all packages...
-    totalpkgs = 0
-    totalfiles = 0
-
-    for pkgname in cache_main.keys():
-        pkg = cache_main[pkgname]
-        matchingfiles = []
-        if not pkg_install_state(pkg):
-            continue
-        if not hasattr(pkg, 'installed_files'):
-            print_err(
-                '\n'.join((
-                    '\nUnable to retrieve installed files for {},',
-                    'apt/apt_pkg may be out of date!'
-                )).format(pkgname)
-            )
-            return 1
-
-        for installedfile in (pkg.installed_files or []):
-            shortname = filenamefunc(installedfile)
-            rematch = repat.search(shortname)
-            if rematch:
-                # Save match for report,
-                # (report when we're finished with this package.)
-                matchingfiles.append(installedfile)
-
-        # Report any matches.
-        if matchingfiles:
-            totalpkgs += 1
-            totalfiles += len(matchingfiles)
-            print('\n{}'.format(pkgname))
-            print('    {}'.format('\n    '.join(matchingfiles)))
-
-    print_status(
-        '\nFound {} files in {} packages.'.format(totalfiles, totalpkgs)
-    )
-    return 0
-
-
 def search_itercache(regex, **kwargs):
     """ search while building the cache,
         Arguments:
@@ -1591,6 +1634,24 @@ def search_itercache(regex, **kwargs):
     # iterate the pkgs as they are loaded.
     for pkg in filter(is_match, cache.iter_open(progress=progress)):
         yield pkg
+
+
+def strip_arch(pkgname, force=False):
+    """ Strip the architecture from a package name (python:i386).
+        If `force` is used, the arch is stripped unconditionally.
+        Otherwise, it is only stripped when the full pkgname can not be found
+        in the cache (python:any).
+    """
+    if (
+            (not force) and
+            (cache_main is not None) and
+            cache_main.get(pkgname, None) is not None):
+        return pkgname
+    name, colon, arch = pkgname.rpartition(':')
+    if name:
+        return name
+    # No ':' in the name (arch is the name now).
+    return arch
 
 
 # CLASSES -----------------------------------------------
