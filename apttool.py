@@ -65,7 +65,7 @@ except ImportError as excolr:
     )
     sys.exit(1)
 
-__version__ = '0.6.1'
+__version__ = '0.6.2'
 NAME = 'AptTool'
 
 # Get short script name.
@@ -1764,12 +1764,12 @@ class SimpleFetchProgress(
     def format_filesize(filesize):
         """ Format/colorize a file size. """
 
-        sizeraw = apt_pkg.size_to_str(item.owner.filesize).split()
+        sizeraw = apt_pkg.size_to_str(filesize).split()
         if len(sizeraw) == 1:
-            size = sizeraw
+            size = sizeraw[0]
             multiplier = ''
         else:
-            size, multiplier = sizeraw.split()
+            size, multiplier = sizeraw
 
         return '[{} {}]'.format(
             C(size, fore='blue'),
