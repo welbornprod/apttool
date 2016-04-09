@@ -65,7 +65,7 @@ except ImportError as excolr:
     )
     sys.exit(1)
 
-__version__ = '0.6.2'
+__version__ = '0.6.3'
 NAME = 'AptTool'
 
 # Get short script name.
@@ -80,7 +80,7 @@ USAGESTR = """{name} v. {version}
         {script} (-P | -R) PACKAGES... [-C] [-I | -N] [-q] [-s]
         {script} -H [QUERY] [COUNT] [-C] [-q]
         {script} -h | -v
-        {script} (-l | -L) PACKAGES... [-C] [-q]
+        {script} (-l | -L) PACKAGES... [-C] [-q] [-s]
         {script} -u [-C] [-q]
         {script} -V PACKAGES... [-C] [-a] [-q] [-s]
         {script} PATTERNS... [-a] [-C] [-I | -N] [-D | -n] [-q] [-r] [-s] [-x]
@@ -146,6 +146,8 @@ USAGESTR = """{name} v. {version}
         -s,--short                   : Use shorter output.
                                        When searching, don't print the
                                        description.
+                                       When locating, don't show the install
+                                       state.
         -S,--suggests                : Show package suggestions.
         -u,--update                  : Update the cache.
                                        ..Just like `apt-get update`.
@@ -162,6 +164,27 @@ USAGESTR = """{name} v. {version}
             [i] = package is installed
             [u] = package is not installed
 
+    Examples:
+        # Shows installed packages with "foo" in the name or description.
+        apttool foo -I
+
+        # Show non-installed packages with "bar" in the name only.
+        apttool bar -N
+
+        # Show installed files for a package.
+        apttool -f python
+
+        # Show installed executables for a package.
+        apttool -e python
+
+        # Show suggested packages for a package.
+        apttool -S python
+
+        # Determine whether a full package name exists in the cache.
+        apttool -l pythonfoo
+
+        # Search apt history.
+        apttool -H install
 """.format(name=NAME, script=SCRIPT, version=__version__)
 
 
@@ -501,29 +524,29 @@ def cmd_installed_files(pkgname, execs_only=False, short=False):
     return 1
 
 
-def cmd_locate(pkgnames, only_existing=False):
+def cmd_locate(pkgnames, only_existing=False, short=False):
     """ Locate one or more packages.
         Arguments:
             pkgnames       : A list of package names, or file names to read
                              from. If '-' is encountered in the list then
                              stdin is used. stdin can only be used once.
             only_existing  : Only show existing packages.
+            short          : When truthy, do not print the install state.
     """
     existing = 0
     checked = 0
     for pname in pkgnames:
         pname = pname.lower().strip()
-        if pname in cache_main:
-            print(C(': ').join(
-                pkg_format_name(pname.rjust(20)),
-                C('exists', fore='green')
-            ))
+        # Use Package for existing, packagename for missing.
+        pkg = cache_main.get(pname, pname)
+        if pkg != pname:
             existing += 1
-        elif not only_existing:
-            print(C(': ').join(
-                C(pname.rjust(20), fore='red', style='bright'),
-                C('missing', fore='red')
-            ))
+        print(pkg_format(
+            pkg,
+            color_missing=True,
+            no_marker=short,
+            no_desc=short
+        ))
 
         checked += 1
 
@@ -871,7 +894,10 @@ def cmdmap_build(argd):
             'args': (
                 parse_packages_arg(argd['PACKAGES']),
             ),
-            'kwargs': {'only_existing': argd['--LOCATE']}
+            'kwargs': {
+                'only_existing': argd['--LOCATE'],
+                'short': argd['--short']
+            }
         },
         '--reversedeps': {
             'func': multi_pkg_func,
@@ -1314,24 +1340,27 @@ def parse_packages_arg(names):
 
 
 def pkg_format(
-        pkg, no_desc=False, no_ver=False, no_marker=False, indent=0,
-        use_version=None, use_relation=None):
+        pkg, color_missing=False, indent=0,
+        no_desc=False, no_marker=False, no_ver=False,
+        use_relation=None, use_version=None):
     """ Formats a single search result, using colors.
 
         Arguments:
-            pkg          : Package object to format.
-            no_desc      : If True, only prints state and name.
-                           Default: False
-            no_ver       : If True, print package version also
-                           (even with no_desc).
-                           Default: False
-            no_marker    : If True, do not print the install state marker.
-            indent       : Number of spaces to indent the final line.
-                           Default: 0
-            use_version  : Print this version number instead of grabbing the
-                           latest/installed version.
-            use_relation : Print this version relation (for dependencies).
-                           (=, >=, ~, etc.).
+            pkg           : Package object to format.
+            color_missing : If True, colorize missing package names
+                            (when pkg is a str instead of a Package).
+            indent        : Number of spaces to indent the final line.
+                            Default: 0
+            no_desc       : If True, only prints state and name.
+                            Default: False
+            no_marker     : If True, do not print the install state marker.
+            no_ver        : If True, print package version also
+                            (even with no_desc).
+                            Default: False
+            use_relation  : Print this version relation (for dependencies).
+                            (=, >=, ~, etc.).
+            use_version   : Print this version number instead of grabbing the
+                            latest/installed version.
     """
     missing = False
     name_len = 35
@@ -1350,7 +1379,10 @@ def pkg_format(
     else:
         marker = '' if no_marker else C('[u]')
         pkgname = pkg.name
-    pkgname = pkg_format_name(pkgname.ljust(name_len))
+    pkgname = pkg_format_name(
+        pkgname.ljust(name_len),
+        missing=missing and color_missing
+    )
     if not no_marker:
         pkgname = C(' ').join(
             marker,
@@ -1438,9 +1470,15 @@ def pkg_format(
     ))
 
 
-def pkg_format_name(s):
-    """ Colorize a package name. """
-    return str(C(s, fore='magenta', style='bright'))
+def pkg_format_name(s, missing=False):
+    """ Colorize a package name.
+        Arguments:
+            s        : A package name to format.
+            missing  : Whether this is a missing package
+                       (not found in the cache).
+                       It will be colored different.
+    """
+    return str(C(s, fore=('red' if missing else 'magenta'), style='bright'))
 
 
 def pkg_install_state(pkg, expected=None):
