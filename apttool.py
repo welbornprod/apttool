@@ -1506,69 +1506,47 @@ def print_err(*args, **kwargs):
 
 def print_example_usage():
     """ Print specific usage examples when -? is used. """
-    examples = (
-        UsageExample(
-            '{script} foo -I',
-            'Shows installed packages with \'foo\' in the name or desc.'
-        ),
-        UsageExample(
-            '{script} bar -n -N',
-            'Show non-installed packages with \'bar\' in the name only.'
-        ),
-        UsageExample(
-            '{script} -f python',
-            'Show installed files for the \'python\' package.'
-        ),
-        UsageExample(
-            '{script} -e python',
-            'Show installed executables for the \'python\' package.'
-        ),
-        UsageExample(
-            '{script} -S python',
-            'Show suggested packages for the \'python\' package.'
-        ),
+    print("""{name} v. {ver}
 
-        UsageExample(
-            '{script} -l pythonfoo',
-            'Determine whether a full package name exists in the cache.',
-            'This is quicker than a full search.'
-        ),
-        UsageExample(
-            '{script} -H install',
-            'Search dpkg history for latest installs/half-installs.'
-        ),
-        UsageExample(
-            '{script} -c foo',
-            'Show packages containing files with \'foo\' in the path.'
-        ),
-        UsageExample(
-            '{script} -h',
-            'Show full help/options.'
-        ),
-    )
-    notes = (
-        UsageText(
-            'If no options are given, the default behaviour is to search for',
-            'packages by name and description, then print results.',
-        ),
-    )
+Example Usage:
 
-    legend = (
-        UsageText(
-            '[i] = package is installed',
-            '[u] = package is not installed',
-            '[?] = package name was not found in the cache',
-        ),
-    )
-    print('\n{name} v. {ver}'.format(name=NAME, ver=__version__))
-    helpinfo = (
-        ('Usage Examples', examples),
-        ('Marker Legend', legend),
-        ('Notes', notes),
-    )
-    for label, items in helpinfo:
-        print('\n{}:'.format(C(label, fore='lightblue', style='bright')))
-        print('\n'.join(str(x) for x in items))
+    Shows installed packages with 'foo' in the name or desc.
+        {script} foo -I
+
+    Show non-installed packages with 'bar' in the name only.
+        {script} bar -n -N
+
+    Show installed files for the 'python' package.
+        {script} -f python
+
+    Show installed executables for the 'python' package.
+        {script} -e python
+
+    Show suggested packages for the 'python' package.
+        {script} -S python
+
+    Determine whether a full package name exists in the cache.
+    This is quicker than a full search.
+        {script} -l pythonfoo
+
+    Search dpkg history for latest installs/half-installs.
+        {script} -H install
+
+    Show packages containing files with 'foo' in the path.
+        {script} -c foo
+
+    Show full help/options.
+        {script} -h
+
+Marker Legend:
+    [i] = package is installed
+    [u] = package is not installed
+    [?] = package name was not found in the cache
+
+Notes:
+    If no options are given, the default behaviour is to search for
+    packages by name and description, then print results.
+    """.format(name=NAME, ver=__version__, script=SCRIPT))
 
 
 def print_missing_pkg(pkgname):
@@ -2276,37 +2254,6 @@ class PackageVersions(UserList):
                 C('latest version available', fore='red').join('(', ')')
             )
 
-
-class UsageExample(object):
-    """ Holds info about a specific usage example for print_example_usage().
-    """
-
-    def __init__(self, cmd, *desclines):
-        self.cmd = cmd
-        if self.cmd.startswith('{script}'):
-            self.cmd = self.cmd.format(script=SCRIPT)
-        self.desclines = desclines
-
-    def __str__(self):
-        desc = C(
-            '      {}'.format('\n      '.join(self.desclines)),
-            fore='cyan'
-        )
-        cmd = C(self.cmd, fore='blue')
-        return '    {}\n{}'.format(cmd, desc)
-
-
-class UsageText(object):
-    """ Holds info and formatting for usage text (for print_example_usage()).
-    """
-    def __init__(self, *lines):
-        self.lines = lines
-
-    def __str__(self):
-        return str(C(
-            '    {}'.format('\n    '.join(self.lines)),
-            fore='cyan'
-        ))
 
 # Fatal Errors that will end this script when raised.
 class BadSearchQuery(ValueError):
