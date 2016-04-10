@@ -6,16 +6,16 @@
     06-2013
 """
 
-from collections import UserList   # PackageVersions class.
-from datetime import datetime      # log date parsing.
-from enum import Enum              # install states.
-import os.path                     # for file/dir
-import re                          # search pattern matching
-import stat                        # checking for executables
-import struct                      # for get_terminal_size()
-import sys                         # for args (Scriptname)
-from time import time              # run time calc.
-import weakref                     # for IterCache()
+from collections import UserDict, UserList   # PackageVersions/UsageExampleKey
+from datetime import datetime                # log date parsing.
+from enum import Enum                        # install states.
+import os.path                               # for file/dir
+import re                                    # search pattern matching
+import stat                                  # checking for executables
+import struct                                # for get_terminal_size()
+import sys                                   # for args (Scriptname)
+from time import time                        # run time calc.
+import weakref                               # for IterCache()
 
 try:
     import apt                        # apt tools
@@ -74,12 +74,12 @@ SCRIPT = os.path.split(sys.argv[0])[-1]
 USAGESTR = """{name} v. {version}
 
     Usage:
+        {script} -? | -h | -v
         {script} -c file [-C] [-n] [-q]
         {script} (-i | -d | -p) PACKAGES... [-C] [-q]
         {script} (-e | -f | -S) PACKAGES... [-C] [-q] [-s]
         {script} (-P | -R) PACKAGES... [-C] [-I | -N] [-q] [-s]
         {script} -H [QUERY] [COUNT] [-C] [-q]
-        {script} -h | -v
         {script} (-l | -L) PACKAGES... [-C] [-q] [-s]
         {script} -u [-C] [-q]
         {script} -V PACKAGES... [-C] [-a] [-q] [-s]
@@ -117,6 +117,7 @@ USAGESTR = """{name} v. {version}
                                        Multiple package names may be
                                        comma-separated, or passed with
                                        multiple flags.
+        -?,--examples                : Show specific usage examples and exit.
         -h,--help                    : Show this help message and exit.
         -H,--history                 : Show package history.
                                        (installs, uninstalls, etc.)
@@ -155,36 +156,6 @@ USAGESTR = """{name} v. {version}
         -V,--VERSION                 : Show a package's installed or available
                                        versions.
         -x,--ignorecase              : Make the search query case-insensitive.
-
-    Notes:
-        If no options are given, the default behaviour is to search for
-        packages by name and description, then print results.
-
-        In the search results:
-            [i] = package is installed
-            [u] = package is not installed
-
-    Examples:
-        # Shows installed packages with "foo" in the name or description.
-        apttool foo -I
-
-        # Show non-installed packages with "bar" in the name only.
-        apttool bar -N
-
-        # Show installed files for a package.
-        apttool -f python
-
-        # Show installed executables for a package.
-        apttool -e python
-
-        # Show suggested packages for a package.
-        apttool -S python
-
-        # Determine whether a full package name exists in the cache.
-        apttool -l pythonfoo
-
-        # Search apt history.
-        apttool -H install
 """.format(name=NAME, script=SCRIPT, version=__version__)
 
 
@@ -206,6 +177,10 @@ def main(argd):
         colr_disable()
     if argd['--quiet']:
         print_status = print_status_err = noop
+    # Non-cache related args.
+    if argd['--examples']:
+        print_example_usage()
+        return 0
 
     # Search (iter_open the cache, not pre-load. for performance)
     if argd['PATTERNS']:
@@ -1529,6 +1504,73 @@ def print_err(*args, **kwargs):
     )
 
 
+def print_example_usage():
+    """ Print specific usage examples when -? is used. """
+    examples = (
+        UsageExample(
+            '{script} foo -I',
+            'Shows installed packages with \'foo\' in the name or desc.'
+        ),
+        UsageExample(
+            '{script} bar -n -N',
+            'Show non-installed packages with \'bar\' in the name only.'
+        ),
+        UsageExample(
+            '{script} -f python',
+            'Show installed files for the \'python\' package.'
+        ),
+        UsageExample(
+            '{script} -e python',
+            'Show installed executables for the \'python\' package.'
+        ),
+        UsageExample(
+            '{script} -S python',
+            'Show suggested packages for the \'python\' package.'
+        ),
+
+        UsageExample(
+            '{script} -l pythonfoo',
+            'Determine whether a full package name exists in the cache.',
+            'This is quicker than a full search.'
+        ),
+        UsageExample(
+            '{script} -H install',
+            'Search dpkg history for latest installs/half-installs.'
+        ),
+        UsageExample(
+            '{script} -c foo',
+            'Show packages containing files with \'foo\' in the path.'
+        ),
+        UsageExample(
+            '{script} -h',
+            'Show full help/options.'
+        ),
+    )
+    notes = (
+        UsageText(
+            'If no options are given, the default behaviour is to search for',
+            'packages by name and description, then print results.',
+        ),
+    )
+
+    legend = (
+        UsageText(
+            '[i] = package is installed',
+            '[u] = package is not installed',
+            '[?] = package name was not found in the cache',
+        ),
+    )
+    print('\n{name} v. {ver}'.format(name=NAME, ver=__version__))
+    helpinfo = (
+        ('Usage Examples', examples),
+        ('Marker Legend', legend),
+        ('Notes', notes),
+    )
+    for label, items in helpinfo:
+        print('\n{}:'.format(C(label, fore='lightblue', style='bright')))
+        print('\n'.join(str(x) for x in items))
+
+
 def print_missing_pkg(pkgname):
     """ Print an error msg (for when a bad package name is given). """
     print_err('\nCan\'t find a package by that name: {}'.format(pkgname))
@@ -2235,6 +2277,37 @@ class PackageVersions(UserList):
             )
 
 
+class UsageExample(object):
+    """ Holds info about a specific usage example for print_example_usage().
+    """
+
+    def __init__(self, cmd, *desclines):
+        self.cmd = cmd
+        if self.cmd.startswith('{script}'):
+            self.cmd = self.cmd.format(script=SCRIPT)
+        self.desclines = desclines
+
+    def __str__(self):
+        desc = C(
+            '      {}'.format('\n      '.join(self.desclines)),
+            fore='cyan'
+        )
+        cmd = C(self.cmd, fore='blue')
+        return '    {}\n{}'.format(cmd, desc)
+
+
+class UsageText(object):
+    """ Holds info and formatting for usage text (for print_example_usage()).
+    """
+    def __init__(self, *lines):
+        self.lines = lines
+
+    def __str__(self):
+        return str(C(
+            '    {}'.format('\n    '.join(self.lines)),
+            fore='cyan'
+        ))
+
 # Fatal Errors that will end this script when raised.
 class BadSearchQuery(ValueError):
     def __init__(self, pattern, re_error):
@@ -2282,6 +2355,7 @@ if __name__ == '__main__':
 
     # Report how long it took
     duration = time() - start_time
-    print_runtime(duration)
+    if duration > 0.01:
+        print_runtime(duration)
 
     sys.exit(ret)
