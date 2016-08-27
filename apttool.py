@@ -65,7 +65,7 @@ except ImportError as excolr:
     )
     sys.exit(1)
 
-__version__ = '0.6.4'
+__version__ = '0.6.5'
 NAME = 'AptTool'
 
 # Get short script name.
@@ -2236,23 +2236,23 @@ class PackageVersions(UserList):
             This contains slightly more information than format_ver().
         """
         if self.latest == self.installed:
-            verstr = C(' ').join(
+            return str(C(' ').join(
                 C(self.installed, fore='green'),
                 C('latest version is installed', fore='green').join('(', ')')
-            )
-        elif self.installed:
+            ))
+        if self.installed:
             # Installed, but warn about not being the latest version.
-            verstr = C(' ').join(
+            return str(C(' ').join(
                 C(self.installed, fore='green'),
                 (C('installed', fore='green')
                     .reset(', latest version is: ')
                     .yellow(self.latest))
-            )
-        else:
-            verstr = C(' ').join(
-                C(self.latest, fore='red'),
-                C('latest version available', fore='red').join('(', ')')
-            )
+            ))
+
+        return str(C(' ').join(
+            C(self.latest, fore='red'),
+            C('latest version available', fore='red').join('(', ')')
+        ))
 
 
 # Fatal Errors that will end this script when raised.
