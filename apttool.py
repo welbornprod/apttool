@@ -7,6 +7,7 @@
 """
 
 from collections import UserDict, UserList   # PackageVersions/UsageExampleKey
+from contextlib import suppress              # easily suppress expected errs.
 from datetime import datetime                # log date parsing.
 from enum import Enum                        # install states.
 import os.path                               # for file/dir
@@ -65,7 +66,7 @@ except ImportError as excolr:
     )
     sys.exit(1)
 
-__version__ = '0.6.5'
+__version__ = '0.6.6'
 NAME = 'AptTool'
 
 # Get short script name.
@@ -262,6 +263,11 @@ def cmd_contains_file(name, shortnamesonly=False):
         print_err('\nInvalid search term!: {}\n{}'.format(name, ex))
         return 1
 
+    print_status(
+        'Looking for packages by file pattern',
+        value=repat.pattern,
+    )
+
     # Setup filename methods (long or short, removes an 'if' from the loop.)
     def getfilenameshort(s):
         return os.path.split(s)[1]
@@ -301,8 +307,16 @@ def cmd_contains_file(name, shortnamesonly=False):
             print(pkg_format(pkg, no_desc=True, no_marker=True))
             print('    {}'.format('\n    '.join(matchingfiles)))
 
+    pluralfiles = 'file' if totalfiles == 1 else 'files'
+    pluralpkgs = 'package' if totalpkgs == 1 else 'packages'
     print_status(
-        '\nFound {} files in {} packages.'.format(totalfiles, totalpkgs)
+        '\nFound',
+        C(totalfiles, fore='blue', style='bright'),
+        pluralfiles,
+        'in',
+        C(totalpkgs, fore='blue', style='bright'),
+        pluralpkgs,
+        '.'
     )
     return 0
 
@@ -1496,8 +1510,8 @@ def pkg_install_state(pkg, expected=None):
 
 
 def print_err(*args, **kwargs):
-    """ Like print(), except `file` is always set to sys.stderr. """
-    kwargs['file'] = sys.stderr
+    """ Like print(), except `file` is set to sys.stderr by default. """
+    kwargs['file'] = kwargs.get('file', sys.stderr)
     return print(
         C(kwargs.get('sep', ' ').join(args), fore='red'),
         **kwargs
@@ -1564,19 +1578,27 @@ def print_runtime(seconds):
 def print_status(*args, **kwargs):
     """ Print a non-critical status message that can be silenced with --quiet.
     """
-    if anyinstance(args, Colr):
-        msg = kwargs.get('sep', ' ').join(str(s) for s in args)
-    else:
-        # Add color to non-colorized messages, use RED for errors.
-        if kwargs.get('file', None) is sys.stderr:
-            msgcolor = 'red'
-        else:
-            msgcolor = 'lightblue'
-        msg = str(C(
-            kwargs.get('sep', ' ').join(args),
-            fore=msgcolor
-        ))
-    print(msg, **kwargs)
+    # Use stdout by default, explicitly setting the 'file' kwarg for print.
+    kwargs['file'] = kwargs.get('file', sys.stdout)
+
+    # Add color to non-colorized messages, use RED for errors.
+    pargs = list(args)
+    msgcolor = 'red' if kwargs['file'] is sys.stderr else 'lightblue'
+    for i, arg in enumerate(pargs[:]):
+        # Keep any previously colorized args (Colr instances).
+        if not isinstance(arg, C):
+            pargs[i] = C(arg, fore=msgcolor)
+
+    # Optional value, for printing label: value style messages.
+    with suppress(KeyError):
+        value = kwargs.pop('value')
+        pargs[-1] = C().join(
+            pargs[-1],
+            ': ',
+            C(value, fore='cyan'),
+        )
+
+    print(*pargs, **kwargs)
 
 
 def print_status_err(*args, **kwargs):
@@ -2270,6 +2292,13 @@ class BadSearchQuery(ValueError):
 
 class CacheNotLoaded(Exception):
     pass
+
+
+class NothingSingleton(object):
+    """ A value to use as None, where None may actually have a meaning. """
+    def __str__(self):
+        return '<Nothing>'
+Nothing = NothingSingleton()
 
 
 # custom progress reporters
