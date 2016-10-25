@@ -1,4 +1,7 @@
 #!/bin/bash
+# This completion script is very basic. There is nothing "smart" about it.
+# It was generated for me by `infi.docopt_completion` (a pip package).
+# In the future, I may make it a little smarter. -Cj
 _apttool()
 {
     local cur
