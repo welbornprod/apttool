@@ -5,6 +5,7 @@
 _apttool()
 {
     local cur
+    # Get current word for completion.
     cur="${COMP_WORDS[COMP_CWORD]}"
 
     if [ "$COMP_CWORD" -ge 1 ]; then
