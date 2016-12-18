@@ -3,7 +3,7 @@
 # This is just an alias for `dpkg (-l|-s) PACKAGE...`, with colors.
 # -Christopher Welborn 11-16-2016
 appname="apttool-show"
-appversion="0.0.1"
+appversion="0.0.2"
 apppath="$(readlink -f "${BASH_SOURCE[0]}")"
 appscript="${apppath##*/}"
 # appdir="${apppath%/*}"
@@ -138,6 +138,7 @@ function print_usage {
 
 declare -a packages
 do_list=0
+star_pat='\*'
 
 for arg; do
     case "$arg" in
@@ -158,7 +159,8 @@ for arg; do
         *)
             packages+=("$arg")
             # Star was used, automatically use -l.
-            [[ "$arg" =~ \* ]] && do_list=1
+
+            [[ "$arg" =~ $star_pat ]] && do_list=1
     esac
 done
 
