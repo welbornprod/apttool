@@ -44,11 +44,22 @@ function list_pkgs {
         echo_err "$output"
         return 1
     fi
+    printf "%-5s %b%-25s %b%-35s %b%-6s %b%s%b\n" \
+        "State" \
+        "$blue" "Name" \
+        "$yellow" "Version" \
+        "$NC" "Arch." \
+        "$cyan" "Description" \
+        "$NC"
+    printf "%-5s %b%-25s %b%-35s %b%-6s %b%s%b\n" \
+        "-----" \
+        "$blue" "----" \
+        "$yellow" "-------" \
+        "$NC" "-----" \
+        "$cyan" "-----------" \
+        "$NC"
     while read state name ver arch desc; do
-        name="$(printf "%-25s" "$name")"
-        ver="$(printf "%-35s" "$ver")"
-        arch="$(printf "%-6s" "$arch")"
-        printf "%s %b%s %b%s %b%s %b%s%b\n" \
+        printf "%-5s %b%-25s %b%-35s %b%-6s %b%s%b\n" \
             "$state" \
             "$blue" "$name" \
             "$yellow" "$ver" \
@@ -68,6 +79,7 @@ function print_pkg_info {
     while read lbl val; do
         if [[ "$lbl" =~ :$ ]]; then
             # Label:value pair.
+            # Set value color depending on the label.
             valcolor=$cyan
             case "$lbl" in
                 Description* )
@@ -86,10 +98,14 @@ function print_pkg_info {
             esac
             # Trim the colon from the label, and indent.
             lbl="$(printf "%*s" "$justlevel" "${lbl:0:-1}")"
-            printf "%b%s%b: %b%s%b\n" "$blue" "$lbl" "$NC" "$valcolor" "$val" "$NC"
+            printf "%b%s%b: %b%s%b\n" \
+                "$blue" "$lbl" "$NC" \
+                "$valcolor" "$val" "$NC"
         else
             # Content ran long.
-            printf "%s%b%s %s%b\n" "$indent" "$valcolor" "$lbl" "$val" "$NC"
+            printf "%s%b%s %s%b\n" \
+                "$indent" "$valcolor" "$lbl" \
+                "$val" "$NC"
         fi
     done <<<"$output";
     return 0
@@ -109,6 +125,8 @@ function print_usage {
 
     Options:
         PACKAGE       : Package name to look up.
+                        If the package name contains a * character then -l
+                        is implied.
         -h,--help     : Show this message.
         -l,--list     : List packages that match a pattern.
                         This is the same as \`dpkg -l\`.
@@ -139,18 +157,21 @@ for arg; do
             ;;
         *)
             packages+=("$arg")
+            # Star was used, automatically use -l.
+            [[ "$arg" =~ \* ]] && do_list=1
     esac
 done
 
 ((${#packages[@]})) || fail_usage "No package names given!"
 
 let errs=0
-justlevel=16
+justlevel=20
 # Dynamically make some spaces for indenting, +2 for ': '.
 indent="$(printf "%*s" "$((justlevel +2))" " ")"
 if ((do_list)); then
     list_pkgs "${packages[@]}" || let errs+=1
 else
+    # Running for each package, for better error messaging/tracking.
     for pkgname in "${packages[@]}"; do
         print_pkg_info "$pkgname" || let errs+=1
     done
