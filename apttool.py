@@ -66,7 +66,7 @@ except ImportError as excolr:
     )
     sys.exit(1)
 
-__version__ = '0.6.6'
+__version__ = '0.7.0'
 NAME = 'AptTool'
 
 # Get short script name.
