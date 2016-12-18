@@ -193,7 +193,9 @@ wraps `dpkg (-l|-s) PACKAGE...`, except it colorizes the output.
 ## Completions
 
 There are `bash` and `oh-my-zsh` completion files included for the `apttool`
-command. To install them just copy them into `/etc/bash_completion.d/`:
+command. To install them just copy them into `/etc/bash_completion.d/` or
+`~/.oh-my-zsh/completions`. See [installation help](#installation) for
+details.
 
 ## Installation
 
