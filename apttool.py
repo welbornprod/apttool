@@ -2257,12 +2257,10 @@ class PackageVersions(UserList):
     def formatted_all(self, header=True):
         """ Return a formatted string for all versions. """
         length = len(self)
-        plural = 'version' if length == 1 else 'versions'
-        versions = (self.format_ver(v) for v in self)
         if header:
             headerstr = '\nFound {} {} for: {}'.format(
-                C(str(length), fore='blue'),
-                plural,
+                C(length, fore='blue'),
+                'version' if length == 1 else 'versions',
                 self.format_name())
         else:
             headerstr = self.format_name()
