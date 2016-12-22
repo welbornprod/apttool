@@ -254,12 +254,15 @@ def cache_get(self, item, default=NoValue):
     return val
 
 
-def cache_load():
+def cache_load(forced=False):
     """ Load apt.Cache(), setting global `cache_main`.
         Returns `cache_main`.
+        Arguments:
+            forced  : Reload cache, even if cache_main is loaded already.
     """
     global cache_main
-    cache_main = apt.Cache(memonly=True)
+    if forced or (cache_main is None):
+        cache_main = apt.Cache(memonly=True)
     return cache_main
 
 
@@ -483,9 +486,6 @@ def cmd_installed_files(pkgname, execs_only=False, short=False):
     """ Print a list of installed files for a package. """
     status = noop if short else print_status
 
-    status('\nGetting installed {} for \'{}\'\n'.format(
-        'executables' if execs_only else 'files',
-        pkgname))
     try:
         package = cache_main[pkgname]
     except KeyError:
@@ -966,12 +966,15 @@ def flatten_args(args, allow_dupes=False):
     """
     if allow_dupes:
         flat = list()
-        for arg in args:
-            flat.extend(s.strip() for s in arg.split(','))
+        add_items = flat.extend
     else:
         flat = set()
-        for arg in args:
-            flat.update(s.strip() for s in arg.split(','))
+        add_items = flat.update
+
+    add_items(
+        s.strip() for s in
+        arg for arg in arg.split(',')
+    )
     return tuple(flat)
 
 
@@ -1082,11 +1085,13 @@ def is_executable(filename):
         st = os.stat(filename)
     except EnvironmentError as ex:
         print_err(
-            'Error checking executable stat: {}\n{}'.format(filename, ex))
-        return False
+            'Error checking executable stats: {}\n{}'.format(filename, ex))
+        # Fallback to crude path check.
+        return ('/bin/' in filename) and (not os.path.isdir(filename))
     return (
         stat.S_ISREG(st.st_mode) and
-        st.st_mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH))
+        st.st_mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    )
 
 
 def is_pkg_match(re_pat, pkg, **kwargs):
