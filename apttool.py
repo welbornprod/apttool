@@ -70,7 +70,7 @@ except ImportError as excolr:
 
 # ------------------------------- End Imports -------------------------------
 
-__version__ = '0.7.2'
+__version__ = '0.7.3'
 
 NAME = 'AptTool'
 
@@ -1478,8 +1478,10 @@ def pkg_format(
 
             pkgdesc = '\n'.join(pkglines)
 
-    if len(pkgdesc) > 188:
-        pkgdesc = '{}...'.format(pkgdesc[:185].rstrip())
+    maxdesclines = 2
+    maxdesclen = (descmax * maxdesclines) - 3
+    if len(pkgdesc) > maxdesclen:
+        pkgdesc = '{}...'.format(pkgdesc[:maxdesclen].rstrip())
 
     # Return the final line, indent if needed.
     return ''.join((
@@ -2361,8 +2363,8 @@ if __name__ == '__main__':
     # Disable colors for non-ttys.
     colr_auto_disable()
     # Get actual terminal size.
-    # TERM_WIDTH, TERM_HEIGHT = get_terminal_size()
-
+    TERM_WIDTH, TERM_HEIGHT = get_terminal_size()
+    TERM_WIDTH -= 10
     main_argd = docopt(
         USAGESTR,
         version='{} v. {}'.format(NAME, __version__))
