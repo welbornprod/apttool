@@ -70,7 +70,7 @@ except ImportError as excolr:
 
 # ------------------------------- End Imports -------------------------------
 
-__version__ = '0.7.3'
+__version__ = '0.7.4'
 
 NAME = 'AptTool'
 
@@ -2228,11 +2228,18 @@ class PackageVersions(UserList):
                 'Expecting a Package with a `versions` attribute.'
             )
 
-        self.data = [v.version for v in pkg.versions]
-        if pkg.installed:
-            self.installed = pkg.installed.version
-        else:
-            self.installed = None
+        # self.data = [v.version for v in pkg.versions]
+        self.data = []
+        for ver in pkg.versions:
+            self.data.append(ver)
+            ver.has_backport = False
+            for origin in ver.origins:
+                if origin.archive.endswith('backports'):
+                    ver.has_backport = True
+                    break
+
+        self.installed = pkg.installed or None
+
         if not self.data:
             raise ValueError('Empty `versions` attribute for Package.')
         self.latest = self.data[0]
@@ -2262,7 +2269,11 @@ class PackageVersions(UserList):
 
         return '\n'.join((
             headerstr,
-            '    {}'.format('\n    '.join(versions))
+            '    {}'.format(
+                '\n    '.join(
+                    self.format_ver(v) for v in self
+                )
+            )
         ))
 
     def format_desc(self):
@@ -2282,21 +2293,27 @@ class PackageVersions(UserList):
         """ Colorize the name for this package. """
         return pkg_format_name(self.package.name)
 
-    def format_ver(self, s):
+    def format_ver(self, ver):
         """ Colorize a single version number according to it's install state.
         """
+        s = ver.version
         verstr = None
-        if s == self.latest:
+        if ver == self.latest:
             verstr = C(' ').join(
                 C(s, fore='blue'),
                 C('latest', fore='blue').join('(', ')')
             )
-        if s == self.installed:
+        if ver == self.installed:
             if not verstr:
                 verstr = C(s, fore='green', style='bright')
             verstr = C(' ').join(
                 verstr,
                 C('installed', fore='green').join('(', ')')
+            )
+        if ver.has_backport:
+            verstr = C(' ').join(
+                verstr,
+                C('backports', fore='cyan').join('(', ')')
             )
         if verstr:
             return str(verstr)
@@ -2307,24 +2324,33 @@ class PackageVersions(UserList):
         """ Format the latest/installed version number.
             This contains slightly more information than format_ver().
         """
+        backportcheckver = self.latest
         if self.latest == self.installed:
-            return str(C(' ').join(
-                C(self.installed, fore='green'),
+            fmt = C(' ').join(
+                C(self.installed.version, fore='green'),
                 C('latest version is installed', fore='green').join('(', ')')
-            ))
-        if self.installed:
+            )
+        elif self.installed:
             # Installed, but warn about not being the latest version.
-            return str(C(' ').join(
-                C(self.installed, fore='green'),
+            fmt = C(' ').join(
+                C(self.installed.version, fore='green'),
                 (C('installed', fore='green')
                     .reset(', latest version is: ')
                     .yellow(self.latest))
-            ))
+            )
+            backportcheckver = self.installed
+        else:
+            fmt = C(' ').join(
+                C(self.latest.version, fore='red'),
+                C('latest version available', fore='red').join('(', ')')
+            )
 
-        return str(C(' ').join(
-            C(self.latest, fore='red'),
-            C('latest version available', fore='red').join('(', ')')
-        ))
+        if backportcheckver.has_backport:
+            fmt = C(' ').join(
+                fmt,
+                C('backports', fore='cyan').join('(', ')')
+            )
+        return str(fmt)
 
 
 # Fatal Errors that will end this script when raised.
@@ -2378,7 +2404,12 @@ if __name__ == '__main__':
     except (BadSearchQuery, CacheNotLoaded) as ex:
         print_err('\n{}'.format(ex))
         ret = 1
-
+    finally:
+        try:
+            cache_main.close()
+        except AttributeError:
+            # Cache was never loaded.
+            pass
     # Report how long it took
     duration = time() - start_time
     if duration > 0.01:
