@@ -6,17 +6,19 @@
     06-2013
 """
 
-from collections import UserDict, UserList   # PackageVersions/UsageExampleKey
-from contextlib import suppress              # easily suppress expected errs.
-from datetime import datetime                # log date parsing.
-from enum import Enum                        # install states.
-import os.path                               # for file/dir
-import re                                    # search pattern matching
-import stat                                  # checking for executables
-import struct                                # for get_terminal_size()
-import sys                                   # for args (Scriptname)
-from time import time                        # run time calc.
-import weakref                               # for IterCache()
+from collections import namedtuple, UserDict, UserList
+from contextlib import suppress
+from datetime import datetime
+from enum import Enum
+import os.path
+import re
+import stat
+import struct
+import subprocess
+import sys
+from time import time
+# for IterCache()
+import weakref
 
 try:
     import apt                        # apt tools
@@ -66,7 +68,10 @@ except ImportError as excolr:
     )
     sys.exit(1)
 
-__version__ = '0.7.0'
+# ------------------------------- End Imports -------------------------------
+
+__version__ = '0.7.1'
+
 NAME = 'AptTool'
 
 # Get short script name.
@@ -115,9 +120,6 @@ USAGESTR = """{name} v. {version}
                                        It just shows files installed to
                                        /bin directories.
         -f,--files                   : Show installed files for package.
-                                       Multiple package names may be
-                                       comma-separated, or passed with
-                                       multiple flags.
         -?,--examples                : Show specific usage examples and exit.
         -h,--help                    : Show this help message and exit.
         -H,--history                 : Show package history.
@@ -165,6 +167,12 @@ USAGESTR = """{name} v. {version}
 cache_main = None
 # Something besides None to represent no value (where None has meaning)
 NoValue = object()
+
+# Tuple for dependency_info() returns.
+DependencyInfo = namedtuple(
+    'DependencyInfo',
+    ('package', 'version', 'relation')
+)
 
 # Set default terminal width/height (set with get_terminal_size() later).
 TERM_WIDTH, TERM_HEIGHT = 80, 120
@@ -246,6 +254,15 @@ def cache_get(self, item, default=NoValue):
     return val
 
 
+def cache_load():
+    """ Load apt.Cache(), setting global `cache_main`.
+        Returns `cache_main`.
+    """
+    global cache_main
+    cache_main = apt.Cache(memonly=True)
+    return cache_main
+
+
 def cmd_contains_file(name, shortnamesonly=False):
     """ Search all installed files for a filename.
         Print packages containing matches.
@@ -270,7 +287,7 @@ def cmd_contains_file(name, shortnamesonly=False):
 
     # Setup filename methods (long or short, removes an 'if' from the loop.)
     def getfilenameshort(s):
-        return os.path.split(s)[1]
+        return os.path.split(s)[-1]
     # Pick filename retrieval function..
     filenamefunc = getfilenameshort if shortnamesonly else str
 
@@ -350,14 +367,14 @@ def cmd_dependencies(pkgname, installstate=None, short=False):
                 pkgver.version))
         for deplst in pkgver.dependencies:
             for dep in filter(is_match, deplst):
-                deppkg, ver, rel = dependency_info(dep, default=dep.name)
+                depinfo = dependency_info(dep, default=dep.name)
                 print(
                     pkg_format(
-                        deppkg,
+                        depinfo.package,
                         no_ver=short,
                         no_desc=short,
-                        use_version=ver,
-                        use_relation=rel
+                        use_version=depinfo.version,
+                        use_relation=depinfo.relation,
                     )
                 )
                 total += 1
@@ -776,7 +793,7 @@ def cmd_update(load_cache=False):
     """
     global cache_main
     if load_cache:
-        cache_main = apt.Cache()
+        cache_load()
 
     try:
         cache_main.update(SimpleFetchProgress(msg='Updating...'))
@@ -937,7 +954,7 @@ def dependency_info(dep, default=None):
     deppkg = cache_main.get(strip_arch(dep.name), default)
     deprel = getattr(dep, 'relation', None) or ''
     depver = getattr(dep, 'version', None) or ''
-    return deppkg, depver, deprel
+    return DependencyInfo(deppkg, depver, deprel)
 
 
 def flatten_args(args, allow_dupes=False):
@@ -1635,12 +1652,10 @@ def run_preload_cmd(argd):
     """ Handle command-line options that may benefit from preloading the
         cache.
     """
-    global cache_main
-
     status = noop if argd['--short'] else print_status
     # Initialize
     status('Loading APT Cache...')
-    cache_main = apt.Cache()
+    cache_load()
     if not cache_main:
         print_err('Failed to load apt cache!')
         return 1
