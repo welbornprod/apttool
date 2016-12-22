@@ -41,7 +41,12 @@ function fail_usage {
 function list_pkgs {
     # Use `dpkg -l` to list packages concisely.
     if ! output="$(dpkg -l "$@" 2>&1)"; then
-        echo_err "$output"
+        if apt-cache show "$@" &>/dev/null; then
+            echo_err "\`dpkg\` will not work for at least one of these packages."
+            echo_err "Use \`apttool-show PACKAGES...\` instead."
+        else
+            echo_err "$output"
+        fi
         return 1
     fi
     printf "%-5s %b%-25s %b%-35s %b%-6s %b%s%b\n" \
@@ -73,8 +78,10 @@ function print_pkg_info {
     # Use `dpkg -s` to show package info.
     local pkgname=$1
     if ! output="$(dpkg -s "$pkgname" 2>/dev/null)"; then
-        echo_err "Package can't be found: $pkgname"
-        return 1
+        if ! output="$(apt-cache show "$pkgname" 2>/dev/null)"; then
+            echo_err "Package can't be found: $pkgname"
+            return 1
+        fi
     fi
     while read lbl val; do
         if [[ "$lbl" =~ :$ ]]; then
