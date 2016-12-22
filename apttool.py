@@ -70,7 +70,7 @@ except ImportError as excolr:
 
 # ------------------------------- End Imports -------------------------------
 
-__version__ = '0.7.1'
+__version__ = '0.7.2'
 
 NAME = 'AptTool'
 
@@ -358,9 +358,7 @@ def cmd_dependencies(pkgname, installstate=None, short=False):
         print_err('\nCan\'t find a package by that name: {}'.format(pkgname))
         return 1
 
-    is_match = (
-        lambda dep:
-            pkg_install_state(dep.name, expected=installstate))
+    totalstate = 0
     total = 0
     for pkgver in package.versions:
         status(
@@ -369,7 +367,8 @@ def cmd_dependencies(pkgname, installstate=None, short=False):
                 package.name,
                 pkgver.version))
         for deplst in pkgver.dependencies:
-            for dep in filter(is_match, deplst):
+            total += 1
+            for dep in installstate.filter_pkgs(deplst):
                 depinfo = dependency_info(dep, default=dep.name)
                 print(
                     pkg_format(
@@ -380,10 +379,14 @@ def cmd_dependencies(pkgname, installstate=None, short=False):
                         use_relation=depinfo.relation,
                     )
                 )
-                total += 1
+                totalstate += 1
 
-    status('\nTotal ({}): {}'.format(installstate, total))
-    return 0 if total > 0 else 1
+    if installstate == InstallStateFilter.every:
+        status('\nTotal: {}'.format(total))
+    else:
+        statestr = str(installstate).title()
+        status('\nTotal: {}, {}: {}'.format(total, statestr, totalstate))
+    return 0 if totalstate > 0 else 1
 
 
 def cmd_history(filtertext=None, count=None):
@@ -644,18 +647,22 @@ def cmd_reverse_dependencies(pkgname, installstate=None, short=False):
     status('\nSearching for {} dependents on {}...'.format(
         installstate,
         package.name))
+    totalstate = 0
     total = 0
-    for pkg in cache_main:
-        if not pkg_install_state(pkg, expected=installstate):
-            continue
+    for pkg in installstate.filter_pkgs(cache_main):
         for pkgver in pkg.versions:
             for deplst in pkgver.dependencies:
+                total += 1
                 for dep in filter(lambda d: d.name == package.name, deplst):
                     print(pkg_format(pkg, no_ver=short, no_desc=short))
-                    total += 1
+                    totalstate += 1
 
-    status('\nTotal ({}): {}'.format(installstate, total))
-    return 0 if total > 0 else 1
+    if installstate == InstallStateFilter.every:
+        status('\nTotal: {}'.format(total))
+    else:
+        statestr = str(installstate).title()
+        status('\nTotal: {}, {}: {}'.format(total, statestr, totalstate))
+    return 0 if totalstate > 0 else 1
 
 
 def cmd_search(query, **kwargs):
@@ -1117,7 +1124,7 @@ def is_pkg_match(re_pat, pkg, **kwargs):
         InstallStateFilter.every)
 
     # Trim filtered packages.
-    if not pkg_install_state(pkg, expected=installstate):
+    if not installstate.matches_pkg(pkg):
         return False
 
     def matchfunc(targetstr, reverse=False):
@@ -1515,9 +1522,17 @@ def pkg_install_state(pkg, expected=None):
             pkg = cache_main.get(pkg, None)
             if pkg is not None:
                 return pkg_install_state(pkg, expected=expected)
-
+        # Last try, could be a dependency object.
+        pkg = cache_main.get(getattr(pkg, 'name', None), None)
+        if pkg is not None:
+            return pkg_install_state(pkg, expected=expected)
         # API fell through?
         # (it has happened before, hince the need for the 2 ifs above)
+        print_err(
+            'Please file a bug, API failed install state check: {!r}'.format(
+                pkg
+            )
+        )
         actualstate = False
 
     if expected == InstallStateFilter.installed:
@@ -1770,6 +1785,15 @@ class InstallStateFilter(Enum):
             InstallStateFilter.installed.value: 'installed'
         }.get(self.value, 'unknown')
 
+    def filter_pkgs(self, pkglst):
+        """ Return a filter object with packages matching this install state.
+        """
+
+        return filter(
+            lambda pkg: pkg_install_state(pkg, expected=self),
+            pkglst
+        )
+
     @classmethod
     def from_argd(cls, argd):
         """ Maps a filter arg to an actual InstallStateFilter. """
@@ -1778,6 +1802,10 @@ class InstallStateFilter(Enum):
         if argd['--NOTINSTALLED']:
             return cls.uninstalled
         return cls.every
+
+    def matches_pkg(self, pkg):
+        """ Return True if the `pkg` matches this install state filter. """
+        return pkg_install_state(pkg, expected=self)
 
 
 class SimpleOpProgress(apt.progress.text.OpProgress):
