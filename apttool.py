@@ -6,7 +6,7 @@
     06-2013
 """
 
-from collections import namedtuple, UserDict, UserList
+from collections import namedtuple, UserList
 from contextlib import suppress
 from datetime import datetime
 from enum import Enum
@@ -14,41 +14,43 @@ import os.path
 import re
 import stat
 import struct
-import subprocess
 import sys
 from time import time
 # for IterCache()
 import weakref
 
-try:
-    import apt                        # apt tools
-    import apt_pkg                    # for IterCache()
-    from apt_pkg import gettext as _  # for IterCache()
-    import apt.progress.text          # apt tools
-except ImportError as eximp:
+
+def import_err(name, exc, module=None):
+    """ Print an error message about missing third-party libs and exit. """
     print(
         '\n'.join((
-            '\nMissing important module or modules!\n{}',
-            '\nThese must be installed:',
-            '      apt: ..uses apt.progress.text and others',
-            '  apt_pkg: ..uses apt_pkg.gettext and others.',
-            '\nTry doing: pip install <modulename>\n'
-        )).format(eximp),
-        file=sys.stderr
-    )
-    sys.exit(1)
-
-
-try:
-    from docopt import docopt        # cmdline arg parser
-except ImportError as exdoc:
-    print(
-        '\nDocopt must be installed, try: pip install docopt.\n\n{}'.format(
-            exdoc
+            'Missing important third-party library: {name}',
+            'This can be installed with `pip`: pip install {module}',
+            'Error message: {exc}'
+        )).format(
+            name=name,
+            module=module or name.lower(),
+            exc=exc,
         ),
         file=sys.stderr
     )
     sys.exit(1)
+
+try:
+    import apt                        # apt tools
+    import apt.progress.text          # apt tools
+except ImportError as ex:
+    import_err('apt', ex)
+try:
+    import apt_pkg                    # for IterCache()
+    from apt_pkg import gettext as _  # for IterCache()
+except ImportError as ex:
+    import_err('apt_pkg', ex)
+
+try:
+    from docopt import docopt        # cmdline arg parser
+except ImportError as exdoc:
+    import_err('Docopt', exdoc)
 
 try:
     from colr import (
@@ -60,17 +62,15 @@ try:
     # Aliased for easier typing and shorter lines.
     C = Colr
 except ImportError as excolr:
-    print(
-        '\nColr must be installed, try: pip install colr\n\n{}'.format(
-            excolr
-        ),
-        file=sys.stderr
-    )
-    sys.exit(1)
+    import_err('Colr', excolr)
+try:
+    from fmtblock import FormatBlock
+except ImportError as exfmtblk:
+    import_err('FormatBlock', exfmtblk, module='formatblock')
 
 # ------------------------------- End Imports -------------------------------
 
-__version__ = '0.7.4'
+__version__ = '0.8.0'
 
 NAME = 'AptTool'
 
@@ -434,8 +434,8 @@ def cmd_install(pkgname, doupdate=False):
     """ Install a package. """
     print_status('\nLooking for \'{}\'...'.format(pkgname))
     if doupdate:
-        updateret = update()
-        if updateret:
+        updateret = cmd_update()
+        if not updateret:
             print_err('\nCan\'t update cache!')
 
     if pkgname in cache_main.keys():
@@ -979,32 +979,10 @@ def flatten_args(args, allow_dupes=False):
         add_items = flat.update
 
     add_items(
-        s.strip() for s in
-        arg for arg in arg.split(',')
+        s.strip() for s in arg  # noqa
+        for arg in args.split(',')
     )
     return tuple(flat)
-
-
-def format_block(
-        text,
-        maxwidth=60, chars=False, newlines=False,
-        prepend=None, strip_first=False, lstrip=False):
-    """ Format a long string into a block of newline seperated text.
-        Arguments:
-            See iter_format_block().
-    """
-    # Basic usage of iter_format_block(), for convenience.
-    return '\n'.join(
-        iter_format_block(
-            text,
-            prepend=prepend,
-            strip_first=strip_first,
-            maxwidth=maxwidth,
-            chars=chars,
-            newlines=newlines,
-            lstrip=lstrip
-        )
-    )
 
 
 def get_latest_ver(pkg):
@@ -1146,61 +1124,6 @@ def is_pkg_match(re_pat, pkg, **kwargs):
     return False
 
 
-def iter_block(text, maxwidth=60, chars=False, newlines=False, lstrip=False):
-    """ Iterator that turns a long string into lines no greater than
-        'maxwidth' in length.
-        It can wrap on spaces or characters. It only does basic blocks.
-        For prepending see `iter_format_block()`.
-
-        Arguments:
-            text       : String to format.
-            maxwidth  : Maximum width for each line.
-                         Default: 60
-            chars      : Wrap on characters if true, otherwise on spaces.
-                         Default: False
-            newlines   : Preserve newlines when True.
-                         Default: False
-            lstrip     : Whether to remove leading spaces from each line.
-                         Default: False
-    """
-    if lstrip:
-        # Remove leading spaces from each line.
-        fmtline = str.lstrip
-    else:
-        # Yield the line as-is.
-        fmtline = str
-    if chars and (not newlines):
-        # Simple block by chars, newlines are treated as a space.
-        text = ' '.join(text.splitlines())
-        for l in (
-                fmtline(text[i:i + maxwidth])
-                for i in range(0, len(text), maxwidth)):
-            yield l
-    elif newlines:
-        # Preserve newlines
-        for line in text.splitlines():
-            for l in iter_block(
-                    line,
-                    maxwidth=maxwidth,
-                    chars=chars,
-                    lstrip=lstrip):
-                yield l
-    else:
-        # Wrap on spaces (ignores newlines)..
-        curline = ''
-        for word in text.split():
-            possibleline = ' '.join((curline, word)) if curline else word
-
-            if len(possibleline) > maxwidth:
-                # This word would exceed the limit, start a new line with it.
-                yield fmtline(curline)
-                curline = word
-            else:
-                curline = possibleline
-        if curline:
-            yield fmtline(curline)
-
-
 def iter_file(filename, skip_comments=True, split_spaces=False):
     """ Iterate over lines in a file, skipping blank lines.
         If 'skip_comments' is truthy then lines starting with #
@@ -1234,61 +1157,6 @@ def iter_file(filename, skip_comments=True, split_spaces=False):
                         yield l
                 else:
                     yield line.rstrip()
-
-
-def iter_format_block(
-        text,
-        maxwidth=60, chars=False, newlines=False,
-        prepend=None, strip_first=False, lstrip=False):
-    """ Iterate over lines in a formatted block of text.
-        This iterator allows you to prepend to each line.
-        For basic blocks see iter_block().
-
-
-        Arguments:
-            text         : String to format.
-
-            maxwidth    : Maximum width for each line. The prepend string is
-                           not included in this calculation.
-                           Default: 60
-
-            chars        : Whether to wrap on characters instead of spaces.
-                           Default: False
-
-            newlines     : Whether to preserve newlines in the original str.
-                           Default: False
-
-            prepend      : String to prepend before each line.
-
-            strip_first  : Whether to omit the prepend string for the first
-                           line.
-                           Default: False
-
-                           Example (when using prepend='$'):
-                            Without strip_first -> '$this', '$that', '$other'
-                               With strip_first -> 'this', '$that', '$other'
-
-            lstrip       : Whether to remove leading spaces from each line.
-                           This doesn't include any spaces in `prepend`.
-                           Default: False
-    """
-    iterlines = iter_block(
-        text,
-        maxwidth=maxwidth,
-        chars=chars,
-        newlines=newlines,
-        lstrip=lstrip)
-    if prepend is None:
-        for l in iterlines:
-            yield l
-    else:
-        # Prepend text to each line.
-        for i, l in enumerate(iterlines):
-            if i == 0 and strip_first:
-                # Don't prepend the first line if strip_first is used.
-                yield l
-            else:
-                yield '{}{}'.format(prepend, l)
 
 
 def iter_history():
@@ -1447,36 +1315,25 @@ def pkg_format(
 
     descmax = TERM_WIDTH - padlen
     padding = ' ' * padlen
-    if len(pkgdesc_full) <= descmax:
-        # already short description
-        pkgdesc = pkgdesc_full
-        if not no_ver:
-            # Add a second line for the version.
-            pkgdesc = '\n'.join((
-                pkgdesc_full,
-                '    {}'.format(verfmt)
+    pkgdesc = FormatBlock(pkgdesc_full).format(
+        width=descmax,
+        strip_first=True,
+        prepend=padding,
+    )
+    if not no_ver:
+        pkglines = pkgdesc.splitlines()
+        pkgver = '    {}'.format(verfmt)
+        if len(pkglines) > 1:
+            # Replace part of the second line with the version.
+            pkglines[1] = ''.join((
+                pkgver,
+                pkglines[1][verlen + 4:]
             ))
-    else:
-        pkgdesc = format_block(
-            pkgdesc_full,
-            maxwidth=descmax,
-            strip_first=True,
-            prepend=padding
-        )
-        if not no_ver:
-            pkglines = pkgdesc.splitlines()
-            pkgver = '    {}'.format(verfmt)
-            if len(pkglines) > 1:
-                # Replace part of the second line with the version.
-                pkglines[1] = ''.join((
-                    pkgver,
-                    pkglines[1][verlen + 4:]
-                ))
-            else:
-                # Add a second line for the version.
-                pkglines.append(pkgver)
+        else:
+            # Add a second line for the version.
+            pkglines.append(pkgver)
 
-            pkgdesc = '\n'.join(pkglines)
+        pkgdesc = '\n'.join(pkglines)
 
     maxdesclines = 2
     maxdesclen = (descmax * maxdesclines) - 3
@@ -2158,15 +2015,27 @@ class HistoryLine(object):
             if statustype == 'status':
                 action = parts[3]
                 pkgnameraw = parts[4]
-                pkgname, pkgarch = pkgnameraw.split(':')
+                try:
+                    pkgname, pkgarch = pkgnameraw.split(':')
+                except ValueError:
+                    pkgname = pkgnameraw
+                    pkgarch = None
                 pkgver = parts[5]
             elif statustype in {'configure', 'trigproc'}:
                 pkgnameraw = parts[3]
-                pkgname, pkgarch = pkgnameraw.split(':')
+                try:
+                    pkgname, pkgarch = pkgnameraw.split(':')
+                except ValueError:
+                    pkgname = pkgnameraw
+                    pkgarch = None
                 pkgver = parts[4]
             elif statustype in {'install', 'upgrade'}:
                 pkgnameraw = parts[3]
-                pkgname, pkgarch = pkgnameraw.split(':')
+                try:
+                    pkgname, pkgarch = pkgnameraw.split(':')
+                except ValueError:
+                    pkgname = pkgnameraw
+                    pkgarch = None
                 pkgfromver = parts[4] if (parts[4] != '<none>') else None
                 pkgver = parts[5]
             else:
@@ -2278,11 +2147,11 @@ class PackageVersions(UserList):
         """ Return a formatted description for the package version. """
         return '\nDescription:\n{}\n'.format(
             C(
-                format_block(
-                    get_pkg_description(self.package),
+                FormatBlock(get_pkg_description(self.package)).format(
                     maxwidth=76,
                     newlines=True,
-                    prepend='    '),
+                    prepend='    '
+                ),
                 fore='green'
             )
         )
@@ -2372,6 +2241,8 @@ class NothingSingleton(object):
     """ A value to use as None, where None may actually have a meaning. """
     def __str__(self):
         return '<Nothing>'
+
+
 Nothing = NothingSingleton()
 
 
