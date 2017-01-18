@@ -2148,7 +2148,7 @@ class PackageVersions(UserList):
         return '\nDescription:\n{}\n'.format(
             C(
                 FormatBlock(get_pkg_description(self.package)).format(
-                    maxwidth=76,
+                    width=76,
                     newlines=True,
                     prepend='    '
                 ),
