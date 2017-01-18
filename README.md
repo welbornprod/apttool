@@ -38,6 +38,7 @@ installed on debian-based systems.
 individual apt packages.
 * `colr`: Provides terminal colors.
 * `docopt`: Provides command-line argument parsing.
+* `formatblock`: Provides easy text block formatting.
 
 ## Command Help
 ```
