@@ -36,6 +36,7 @@ def import_err(name, exc, module=None):
     )
     sys.exit(1)
 
+
 try:
     import apt                        # apt tools
     import apt.progress.text          # apt tools
@@ -70,7 +71,7 @@ except ImportError as exfmtblk:
 
 # ------------------------------- End Imports -------------------------------
 
-__version__ = '0.8.0'
+__version__ = '0.8.1'
 
 NAME = 'AptTool'
 
@@ -432,7 +433,7 @@ def cmd_history(filtertext=None, count=None):
 
 def cmd_install(pkgname, doupdate=False):
     """ Install a package. """
-    print_status('\nLooking for \'{}\'...'.format(pkgname))
+    print_status('\nLooking for \'{}\' to install...'.format(pkgname))
     if doupdate:
         updateret = cmd_update()
         if not updateret:
@@ -567,7 +568,7 @@ def cmd_locate(pkgnames, only_existing=False, short=False):
 def cmd_remove(pkgname, purge=False):
     """ Remove or Purge a package by name """
 
-    print_status('\nLooking for \'{}\'...'.format(pkgname))
+    print_status('\nLooking for \'{}\' to remove...'.format(pkgname))
     if purge:
         opaction = 'purge'
         opstatus = 'Purging'
@@ -702,8 +703,13 @@ def cmd_search(query, **kwargs):
     print_status('Initializing Cache...')
     cache = IterCache(do_open=False)
     cache._pre_iter_open()
+    ignorecase = kwargs.get('case_insensitive', False)
     print_status(
-        'Searching ~{} packages for {}'.format(cache.rough_size, query)
+        'Searching ~{} packages for {}{}'.format(
+            cache.rough_size,
+            query,
+            ' (case-insensitive)' if ignorecase else '',
+        )
     )
 
     # Update arguments for use with search_itercache().
@@ -822,7 +828,7 @@ def cmd_version(pkgname, allversions=False, div=False, short=False):
     if (not short) and div:
         print_status(C('{}'.format('-' * TERM_WIDTH)))
     status = noop if short else print_status
-    status('\nLooking for \'{}\'...'.format(pkgname))
+    status('\nLooking for \'{}\' versions...'.format(pkgname))
     try:
         package = cache_main[pkgname]
     except KeyError:
@@ -1579,7 +1585,8 @@ def search_itercache(regex, **kwargs):
     case_insensitive = kwargs.get('case_insensitive', False)
     installstate = (
         kwargs.get('installstate', InstallStateFilter.every) or
-        InstallStateFilter.every)
+        InstallStateFilter.every
+    )
 
     # initialize Cache object without opening,
     # or use existing cache passed in with cache keyword.
