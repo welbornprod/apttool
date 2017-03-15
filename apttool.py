@@ -22,18 +22,38 @@ import weakref
 
 def import_err(name, exc, module=None):
     """ Print an error message about missing third-party libs and exit. """
+    module = module or name.lower()
+    # Get actual module name from exception if possible, for when dependencies
+    # are not installed.
+    namepat = re.compile('cannot import name \'(?P<name>[^\']+)\'')
+    namematch = namepat.search(str(exc))
+    excname = None
+    if namematch is not None:
+        excname = namematch.groupdict().get('name', None)
+    modname = exc.name or excname
+    propername = name if name.lower() == str(modname).lower() else modname
     print(
         '\n'.join((
             'Missing important third-party library: {name}',
             'This can be installed with `pip`: pip install {module}',
-            'Error message: {exc}'
+            '\nError message: {exc}'
         )).format(
-            name=name,
-            module=module or name.lower(),
+            name=propername,
+            module=modname if modname and modname != module else module,
             exc=exc,
         ),
         file=sys.stderr
     )
+    if modname and (modname != module):
+        print(
+            '\n'.join((
+                '\n{name} depends on {module} to run correctly.',
+            )).format(
+                name=name,
+                module=modname,
+            ),
+            file=sys.stderr,
+        )
     sys.exit(1)
 
 
@@ -49,21 +69,18 @@ except ImportError as ex:
     import_err('apt_pkg', ex)
 
 try:
-    from docopt import docopt        # cmdline arg parser
-except ImportError as exdoc:
-    import_err('Docopt', exdoc)
-
-try:
     from colr import (
         auto_disable as colr_auto_disable,
         Colr,
         disable as colr_disable,
-        strip_codes
+        docopt,
+        strip_codes,
     )
     # Aliased for easier typing and shorter lines.
     C = Colr
 except ImportError as excolr:
     import_err('Colr', excolr)
+
 try:
     from fmtblock import FormatBlock
 except ImportError as exfmtblk:
@@ -71,7 +88,7 @@ except ImportError as exfmtblk:
 
 # ------------------------------- End Imports -------------------------------
 
-__version__ = '0.8.1'
+__version__ = '0.8.2'
 
 NAME = 'AptTool'
 
@@ -2269,7 +2286,9 @@ if __name__ == '__main__':
     TERM_WIDTH -= 10
     main_argd = docopt(
         USAGESTR,
-        version='{} v. {}'.format(NAME, __version__))
+        version='{} v. {}'.format(NAME, __version__),
+        script=SCRIPT,
+    )
     # grab start time for timing.
     start_time = time()
     try:
