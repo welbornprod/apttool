@@ -75,6 +75,8 @@ try:
         disable as colr_disable,
         docopt,
         strip_codes,
+        AnimatedProgress,
+        Frames,
     )
     # Aliased for easier typing and shorter lines.
     C = Colr
@@ -1556,8 +1558,13 @@ def run_preload_cmd(argd):
     """
     status = noop if argd['--short'] else print_status
     # Initialize
-    status('Loading APT Cache...')
-    cache_load()
+    spinner = AnimatedProgress(
+        'Loading APT Cache...',
+        fmt=' {frame} {elapsed:<2.0f}s {text}',
+        frames=Frames.dots_orbit.as_gradient(name='blue', style='bright'),
+    )
+    with spinner:
+        cache_load()
     if not cache_main:
         print_err('Failed to load apt cache!')
         return 1
