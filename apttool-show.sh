@@ -19,7 +19,7 @@ green='\e[0;32m'
 NC='\e[0m'
 
 function echo_err {
-    # Echo to stderr.
+    # Echo to stderr, with colors if it's a terminal.
     [[ -t 2 ]] && printf "%b" "$red" 1>&2
     printf "\n%s" "$@" 1>&2
     [[ -t 2 ]] && printf "%b" "$NC" 1>&2
@@ -63,7 +63,7 @@ function list_pkgs {
         "$NC" "-----" \
         "$cyan" "-----------" \
         "$NC"
-    while read state name ver arch desc; do
+    while read -r state name ver arch desc; do
         printf "%-5s %b%-25s %b%-35s %b%-6s %b%s%b\n" \
             "$state" \
             "$blue" "$name" \
@@ -83,7 +83,7 @@ function print_pkg_info {
             return 1
         fi
     fi
-    while read lbl val; do
+    while read -r lbl val; do
         if [[ "$lbl" =~ :$ ]]; then
             # Label:value pair.
             # Set value color depending on the label.

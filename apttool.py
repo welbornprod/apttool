@@ -182,11 +182,17 @@ USAGESTR = """{name} v. {version}
 """.format(name=NAME, script=SCRIPT, version=__version__)
 
 
+class NothingSingleton(object):
+    """ A value to use as None, where None may actually have a meaning. """
+    def __str__(self):
+        return '<Nothing>'
+
+
+Nothing = NothingSingleton()
+
 # GLOBALS ------------------------------------------------
 # placeholder for global cache
 cache_main = None
-# Something besides None to represent no value (where None has meaning)
-NoValue = object()
 
 # Tuple for dependency_info() returns.
 DependencyInfo = namedtuple(
@@ -251,24 +257,14 @@ def noop(*args, **kwargs):
     return None
 
 
-def anyinstance(iterable, klass):
-    """ Like isinstance(), but checks an iterable for any occurrences of
-        isinstance(item, klass) == True.
-    """
-    for obj in iterable:
-        if isinstance(obj, klass):
-            return True
-    return False
-
-
-def cache_get(self, item, default=NoValue):
+def cache_get(self, item, default=Nothing):
     """ Supplies Cache.get()
         To monkeypatch apt.Cache to act like a dict with .get()
     """
     try:
         val = self[item]
     except KeyError:
-        if default is NoValue:
+        if default is Nothing:
             raise
         return default
     return val
@@ -570,6 +566,8 @@ def cmd_locate(pkgnames, only_existing=False, short=False):
         pkg = cache_main.get(pname, pname)
         if pkg != pname:
             existing += 1
+        elif only_existing:
+            continue
         print(pkg_format(
             pkg,
             color_missing=True,
@@ -989,27 +987,6 @@ def dependency_info(dep, default=None):
     return DependencyInfo(deppkg, depver, deprel)
 
 
-def flatten_args(args, allow_dupes=False):
-    """ Flatten any comma separated args, mixed with regular args, into a
-        single tuple.
-        Example:
-            flatten_arg_list(['test', 'this,thing', 'out, right, here'])
-            # ['test', 'this', 'thing', 'out', 'right', 'here']
-    """
-    if allow_dupes:
-        flat = list()
-        add_items = flat.extend
-    else:
-        flat = set()
-        add_items = flat.update
-
-    add_items(
-        s.strip() for s in arg  # noqa
-        for arg in args.split(',')
-    )
-    return tuple(flat)
-
-
 def get_latest_ver(pkg):
     """ Return the latest version for a package. """
     ver = get_latest_verobj(pkg)
@@ -1147,41 +1124,6 @@ def is_pkg_match(re_pat, pkg, **kwargs):
         return True
     # No match/no desc to search
     return False
-
-
-def iter_file(filename, skip_comments=True, split_spaces=False):
-    """ Iterate over lines in a file, skipping blank lines.
-        If 'skip_comments' is truthy then lines starting with #
-        are also skipped.
-        If filename is None, then stdin is used.
-        If split_spaces is True, words will be yielded instead of lines.
-    """
-    if skip_comments:
-        def is_skipped(l):
-            (not l) or l.startswith('#')
-    else:
-        def is_skipped(l):
-            return (not l)
-
-    if filename is None:
-        for line in sys.stdin.readlines():
-            if is_skipped(line.strip()):
-                continue
-            if split_spaces:
-                for l in line.rstrip().split():
-                    yield l
-            else:
-                yield line.rstrip()
-    else:
-        with open(filename, 'r') as f:
-            for line in f:
-                if is_skipped(line.strip()):
-                    continue
-                if split_spaces:
-                    for l in line.rstrip().split():
-                        yield l
-                else:
-                    yield line.rstrip()
 
 
 def iter_history():
@@ -2094,7 +2036,7 @@ class HistoryLine(object):
     def matches(self, repat):
         """ See if this history line matches a regex pattern.
             This tests the raw line, status type, date/time.
-            If repat is None, then False is returned.
+            If repat is None, then True is returned.
         """
         if not repat:
             # No filter applied.
@@ -2266,15 +2208,6 @@ class BadSearchQuery(ValueError):
 
 class CacheNotLoaded(Exception):
     pass
-
-
-class NothingSingleton(object):
-    """ A value to use as None, where None may actually have a meaning. """
-    def __str__(self):
-        return '<Nothing>'
-
-
-Nothing = NothingSingleton()
 
 
 # custom progress reporters
