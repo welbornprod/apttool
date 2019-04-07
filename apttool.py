@@ -16,8 +16,6 @@ import stat
 import struct
 import sys
 from time import time
-# for IterCache()
-import weakref
 
 
 def import_err(name, exc, module=None):
@@ -88,26 +86,6 @@ try:
 except ImportError as exfmtblk:
     import_err('FormatBlock', exfmtblk, module='formatblock')
 
-try:
-    from printdebug import DebugColrPrinter
-except ImportError as exprintdebug:
-    import_err('PrintDebug', exprintdebug, module='printdebug')
-
-debugprinter = DebugColrPrinter()
-# Debug is enabled through an env variable.
-DEBUG = bool(os.environ.get('APTTOOL_DEBUG', None))
-if DEBUG:
-    try:
-        breakpoint
-    except NameError:
-        # Python 3.6 and below.
-        def breakpoint():
-            import pudb
-            pudb.set_trace()
-
-debugprinter.enable(DEBUG)
-debug = debugprinter.debug
-debug('Debug enabled.')
 # ------------------------------- End Imports -------------------------------
 
 __version__ = '0.9.0'
