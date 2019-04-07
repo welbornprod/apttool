@@ -37,7 +37,7 @@ def import_err(name, exc, module=None):
             '\nError message: {exc}'
         )).format(
             name=propername,
-            module=modname if modname and modname != module else module,
+            module=modname if (modname and modname != module) else module,
             exc=exc,
         ),
         file=sys.stderr
@@ -1385,47 +1385,87 @@ def print_err(*args, **kwargs):
 
 def print_example_usage():
     """ Print specific usage examples when -? is used. """
-    print("""{name} v. {ver}
+    CmdExample = namedtuple('CmdExample', ('cmd', 'desc'))
 
-Example Usage:
+    print('\n'.join((
+        '{name} v. {ver}'.format(
+            name=C(NAME, 'blue', style='bright'),
+            ver=C(__version__, 'blue'),
+        ),
+        '\nExample Usage:',
+    )))
+    cmdexamples = (
+        CmdExample(
+            'foo -I',
+            'Shows installed packages with \'foo\' in the name or desc.',
+        ),
+        CmdExample(
+            'bar -n -N',
+            'Show non-installed packages with \'bar\' in the name only.',
+        ),
+        CmdExample(
+            '-f python',
+            'Show installed files for the \'python\' package.',
+        ),
+        CmdExample(
+            '-e python',
+            'Show installed executables for the \'python\' package.',
+        ),
+        CmdExample(
+            '-S python',
+            'Show suggested packages for the \'python\' package.',
+        ),
+        CmdExample(
+            '-l pythonfoo',
+            '\n    '.join((
+                'Determine whether a full package name exists in the cache.',
+                'This is quicker than a full search.',
+            ))
+        ),
+        CmdExample(
+            '-H install',
+            'Search dpkg history for latest installs/half-installs.',
+        ),
+        CmdExample(
+            '-c foo',
+            'Show packages containing files with \'foo\' in the path.',
+        ),
+        CmdExample(
+            '-h',
+            'Show full help/options.',
+        ),
+    )
+    for cmdexample in cmdexamples:
+        print('\n    {}'.format(C(cmdexample.desc, 'cyan')))
+        print('    {} {}'.format(
+            C(SCRIPT, 'blue', style='bright'),
+            C(cmdexample.cmd, 'blue'),
+        ))
 
-    Shows installed packages with 'foo' in the name or desc.
-        {script} foo -I
+    StateExample = namedtuple('StateExample', ('char', 'desc'))
+    print('\nMarker Legend:')
+    stateexamples = (
+        StateExample('i', 'package is installed'),
+        StateExample('u', 'package is not installed'),
+        StateExample('?', 'package name was not found in the cache'),
+    )
+    for stateexample in stateexamples:
+        print('    {} = {}'.format(
+            C(stateexample.char, 'blue').join('[', ']'),
+            C(stateexample.desc, 'cyan'),
+        ))
 
-    Show non-installed packages with 'bar' in the name only.
-        {script} bar -n -N
-
-    Show installed files for the 'python' package.
-        {script} -f python
-
-    Show installed executables for the 'python' package.
-        {script} -e python
-
-    Show suggested packages for the 'python' package.
-        {script} -S python
-
-    Determine whether a full package name exists in the cache.
-    This is quicker than a full search.
-        {script} -l pythonfoo
-
-    Search dpkg history for latest installs/half-installs.
-        {script} -H install
-
-    Show packages containing files with 'foo' in the path.
-        {script} -c foo
-
-    Show full help/options.
-        {script} -h
-
-Marker Legend:
-    [i] = package is installed
-    [u] = package is not installed
-    [?] = package name was not found in the cache
-
-Notes:
-    If no options are given, the default behaviour is to search for
-    packages by name and description, then print results.
-    """.format(name=NAME, ver=__version__, script=SCRIPT))
+    print('\nNotes:')
+    print(
+        C(
+            '\n'.join((
+                '    If no options are given, the default behaviour is to',
+                '    search for packages by name and description, then',
+                '    print results.',
+            )),
+            'cyan',
+        )
+    )
 
 
 def print_missing_pkg(pkgname):
@@ -1608,6 +1648,7 @@ class AptToolFilter(apt.cache.Filter):
             )
         ))
         return True
+
 
 # Fatal Errors that will end this script when raised.
 class BadSearchQuery(ValueError):
