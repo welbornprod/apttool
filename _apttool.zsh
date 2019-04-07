@@ -1,3 +1,4 @@
+#!/usr/bin/env zsh
 #compdef apttool
 
 _message_next_arg()
