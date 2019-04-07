@@ -90,7 +90,7 @@ except ImportError as exfmtblk:
 
 # ------------------------------- End Imports -------------------------------
 
-__version__ = '0.8.2'
+__version__ = '0.9.0'
 
 NAME = 'AptTool'
 
@@ -718,7 +718,10 @@ def cmd_search(query, **kwargs):
 
     # Initialize cache without doing an .open() (do iter_open() instead)
     print_status('Initializing Cache...')
-    cache = IterCache(do_open=False)
+    if py_ver_at_least(major=3, minor=6):
+        cache = IterCache36(do_open=False)
+    else:
+        cache = IterCache(do_open=False)
     cache._pre_iter_open()
     ignorecase = kwargs.get('case_insensitive', False)
     print_status(
@@ -1045,7 +1048,7 @@ def get_terminal_size():
             cr = struct.unpack('hh',
                                fcntl.ioctl(fd, termios.TIOCGWINSZ, '1234'))
             return cr
-        except:
+        except Exception:
             pass
     cr = ioctl_GWINSZ(0) or ioctl_GWINSZ(1) or ioctl_GWINSZ(2)
     if not cr:
@@ -1053,12 +1056,12 @@ def get_terminal_size():
             fd = os.open(os.ctermid(), os.O_RDONLY)
             cr = ioctl_GWINSZ(fd)
             os.close(fd)
-        except:
+        except Exception:
             pass
     if not cr:
         try:
             cr = (os.environ['LINES'], os.environ['COLUMNS'])
-        except:
+        except Exception:
             return None
     return int(cr[1]), int(cr[0])
 
@@ -1470,6 +1473,17 @@ def print_status_err(*args, **kwargs):
     if kwargs.get('file', None) is None:
         kwargs['file'] = sys.stderr
     print_status(*args, **kwargs)
+
+
+def py_ver_at_least(major=0, minor=0, micro=0):
+    """ Returns True if the current python version is equal or greater to
+        the one given.
+    """
+    return (
+        sys.version_info.major >= major and
+        sys.version_info.minor >= minor and
+        sys.version_info.micro >= micro
+    )
 
 
 def query_build(patterns, all_patterns=False):
@@ -1905,6 +1919,123 @@ class IterCache(apt.Cache):
                 if self._have_multi_arch:
                     self._fullnameset.add(pkg.get_fullname(pretty=False))
                 yield self.__getitem__(pkgname)
+
+
+class IterCache36(IterCache):
+    def __init__(
+            self, progress=None, rootdir=None, memonly=False, do_open=False):
+        self._cache = apt_pkg.Cache
+        self._depcache = apt_pkg.DepCache
+        self._records = apt_pkg.PackageRecords
+        self._list = apt_pkg.SourceList
+        self._callbacks = {}
+        self._callbacks2 = {}
+        self._weakref = weakref.WeakValueDictionary()
+        self._weakversions = weakref.WeakSet()
+        self._changes_count = -1
+        self._sorted_set = None
+
+        self.connect('cache_post_open', '_inc_changes_count')
+        self.connect('cache_post_change', '_inc_changes_count')
+        if memonly:
+            # force apt to build its caches in memory
+            apt_pkg.config.set('Dir::Cache::pkgcache', '')
+        if rootdir:
+            rootdir = os.path.abspath(rootdir)
+            if os.path.exists(rootdir + '/etc/apt/apt.conf'):
+                apt_pkg.read_config_file(apt_pkg.config,
+                                         rootdir + '/etc/apt/apt.conf')
+            if os.path.isdir(rootdir + '/etc/apt/apt.conf.d'):
+                apt_pkg.read_config_dir(apt_pkg.config,
+                                        rootdir + '/etc/apt/apt.conf.d')
+            apt_pkg.config.set('Dir', rootdir)
+            apt_pkg.config.set('Dir::State::status',
+                               rootdir + '/var/lib/dpkg/status')
+            # also set dpkg to the rootdir path so that its called for the
+            # --print-foreign-architectures call
+            apt_pkg.config.set('Dir::bin::dpkg',
+                               os.path.join(rootdir, 'usr', 'bin', 'dpkg'))
+            # create required dirs/files when run with special rootdir
+            # automatically
+            self._check_and_create_required_dirs(rootdir)
+            # Call InitSystem so the change to Dir::State::Status is actually
+            # recognized (LP: #320665)
+            apt_pkg.init_system()
+        if do_open:
+            self.open(progress)
+
+    def _pre_iter_open(self, progress=None):
+        """ Things to do before the actual iter_open,
+            this allows you to get the rough size before iterating.
+        """
+        if progress is None:
+            progress = apt.progress.base.OpProgress()
+        # close old cache on (re)open
+        self.close()
+        self.op_progress = progress
+        self._run_callbacks('cache_pre_open')
+
+        self._cache = apt_pkg.Cache(progress)
+        self._depcache = apt_pkg.DepCache(self._cache)
+        self._records = apt_pkg.PackageRecords(self._cache)
+        self._list = apt_pkg.SourceList()
+        self._list.read_main_list()
+        self._sorted_set = None
+        self.rough_size = len(self._cache.packages)
+
+    def __remap(self):
+        """Called after cache reopen() to relocate to new cache.
+
+        Relocate objects like packages and versions from the old
+        underlying cache to the new one.
+        """
+        for key in list(self._weakref.keys()):
+            try:
+                pkg = self._weakref[key]
+                yield pkg
+            except KeyError:
+                continue
+
+            try:
+                pkg._pkg = self._cache[pkg._pkg.name, pkg._pkg.architecture]
+            except LookupError:
+                del self._weakref[key]
+
+        for ver in list(self._weakversions):
+            # Package has been reseated above, reseat version
+            for v in ver.package._pkg.version_list:
+                # Requirements as in debListParser::SameVersion
+                if (
+                        v.hash == ver._cand.hash and
+                        (
+                            v.size == 0 or
+                            ver._cand.size == 0 or
+                            v.size == ver._cand.size
+                        ) and
+                        v.multi_arch == ver._cand.multi_arch and
+                        v.ver_str == ver._cand.ver_str):
+                    ver._cand = v
+                    break
+            else:
+                self._weakversions.remove(ver)
+
+    def iter_open(self, progress=None):
+        """ Open the package cache, after that it can be used like
+            a dictionary
+        """
+        if progress is None:
+            progress = apt.progress.base.OpProgress()
+        # close old cache on (re)open
+        self.close()
+        if self._cache is None:
+            self._pre_iter_open(progress=progress)
+
+        yield from self.__remap()
+
+        self._have_multi_arch = len(apt_pkg.get_architectures()) > 1
+
+        progress.done()
+        self._run_callbacks('cache_post_open')
 
 
 # History package info.
