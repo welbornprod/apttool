@@ -9,7 +9,7 @@ appscript="${apppath##*/}"
 appdir="${apppath%/*}"
 
 file_src="$appdir/apttool_completion.sh"
-file_dest="/usr/share/bash-completion/completions/apttool"
+file_dest="/etc/bash_completion.d/apttool"
 [[ -f "$file_src" ]] || {
     echo "Missing apttool completion file: $file_src" 1>&2
     exit 1
