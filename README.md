@@ -2,6 +2,7 @@
 
 This tool is for searching package names and descriptions in the apt-cache,
 listing dependencies/reverse-dependencies and suggested packages.
+
 It also handles installs, upgrades, removals/purges, and some other stuff
 (reverse file searches, history searching). By using regex or plain-text you
 can quickly find a package by part of a name, or part of a description.
@@ -9,9 +10,7 @@ The real package name, install-state, and description will be listed for all
 packages that match (or don't match when --reverse  is used).
 There are options to search names only, or omit the descriptions when printing
 results.
-The cache is searched while it is being loaded. This helps to cut down on the
-time, by iterating over the packages only once instead of loading first, and
-searching second.
+
 Results are shown as they are found, so even if searching the packages is
 taking too long you will normally see some results right away.
 You can always `Ctrl + C` if you already found what you were looking for.
@@ -19,6 +18,7 @@ Using the `--containsfile`  option you can reverse-search a file to find out
 what package it came from (if any).
 You can also list all installed-files for a package using the `--files`
 option.
+
 Obviously, a package must already be installed to list the installed-files.
 The `-V` option will show the current version information for a package,
 and when coupled with `-a` , can show all available versions.
@@ -191,6 +191,42 @@ packages by name and description, then print results.
 There is a little helper script included (`apttool-show.sh`), that basically
 wraps `dpkg (-l|-s) PACKAGE...`, except it colorizes the output.
 
+```
+Usage:
+    apttool-show -h | -v
+    apttool-show [-l] PACKAGE...
+
+Options:
+    PACKAGE       : Package name to look up.
+                    If the package name contains a * character then -l
+                    is implied.
+    -h,--help     : Show this message.
+    -l,--list     : List packages that match a pattern.
+                    This is the same as `dpkg -l`.
+    -v,--version  : Show apttool-show version and exit.
+```
+
+## AptTool-Installed
+
+Another helper script included that lists all packages installed after the
+base packages (after OS install). It may not be %100 accurate, but it is
+useful for building a list of all user-installed packages.
+
+This is much quicker than `apttool -I`, and won't show most system packages.
+
+```
+Usage:
+    apttool-installed -h | -v
+    apttool-installed [PATTERN...]
+
+Options:
+    PATTERN       : One or more text/regex patterns to filter patterns.
+                    This is just a shorter way to build multiple grep
+                    patterns.
+    -h,--help     : Show this message.
+    -v,--version  : Show apttool-installed version and exit.
+```
+
 ## Completions
 
 There are `bash` and `oh-my-zsh` completion files included for the `apttool`
@@ -210,12 +246,13 @@ cd apttool
 # Symlink the executables, assuming ~/.local/bin is in $PATH.
 ln -s "$PWD/apttool.py" ~/.local/bin/apttool
 ln -s "$PWD/aptool-show.sh" ~/.local/bin/apttool-show
+ln -s "$PWD/aptool-installed.sh" ~/.local/bin/apttool-installed
 
-# Copy the completion files.
+# Symlink the completion files.
 # BASH
-cp apttool_completions.sh /etc/bash_completion.d/apttool
+ln -s "$PWD/_apttool.bash" /etc/bash_completion.d/apttool
 # Oh-my-zsh
-cp _apttool.sh ~/.oh-my-zsh/completions/_apttool
+ln -s "$PWD/_apttool.zsh" ~/.oh-my-zsh/completions/_apttool
 ```
 
 After that, you can run apttool with `apttool` and enjoy the basic

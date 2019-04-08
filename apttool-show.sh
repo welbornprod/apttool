@@ -3,7 +3,7 @@
 # This is just an alias for `dpkg (-l|-s) PACKAGE...`, with colors.
 # -Christopher Welborn 11-16-2016
 appname="apttool-show"
-appversion="0.0.2"
+appversion="0.0.3"
 apppath="$(readlink -f "${BASH_SOURCE[0]}")"
 appscript="${apppath##*/}"
 # appdir="${apppath%/*}"
