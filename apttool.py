@@ -2,8 +2,9 @@
 # -*- coding: utf-8 -*-
 """ apttool.py
     Provides a few apt-related functions based on the 'apt' module.
-    -Christopher Welborn
-    06-2013
+    -Christopher Welborn 06-??-2013
+
+    Revisited: 4-7-2019
 """
 
 from collections import namedtuple, UserList
@@ -510,10 +511,14 @@ def cmd_installed_files(pkgname, execs_only=False, short=False):
         return 1
 
     if not pkg_install_state(package):
-        print_err(''.join((
-            '\nThis package is not installed: {}',
+        print_err(
+            '\nThis package is not installed: {}'.format(
+                C(package.name, 'blue')
+            ),
             '\nCan\'t get installed files for ',
-            'uninstalled packages.')).format(package.name))
+            'uninstalled packages.',
+            sep=''
+        )
         return 1
 
     if not hasattr(package, 'installed_files'):
@@ -1378,7 +1383,10 @@ def print_err(*args, **kwargs):
     """ Like print(), except `file` is set to sys.stderr by default. """
     kwargs['file'] = kwargs.get('file', sys.stderr)
     return print(
-        C(kwargs.get('sep', ' ').join(args), fore='red'),
+        C(kwargs.get('sep', ' ')).join(
+            a if isinstance(a, C) else C(a, 'red')
+            for a in args
+        ),
         **kwargs
     )
 
