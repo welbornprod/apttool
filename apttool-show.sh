@@ -120,7 +120,7 @@ function print_pkg_info {
 
 function print_usage {
     # Show usage reason if first arg is available.
-    [[ -n "$1" ]] && echo_err "\n$1\n"
+    [[ -n "$1" ]] && echo_err "$1"
 
     echo "$appname v. $appversion
 
