@@ -21,6 +21,19 @@ _apttool()
     fi
 }
 
+_apttool_installed()
+{
+    local cur
+    # Get current word for completion.
+    cur="${COMP_WORDS[COMP_CWORD]}"
+
+    if ((COMP_CWORD)); then
+        if [[ "$cur" == -* ]]; then
+            COMPREPLY=( $( compgen -fW '-h --help -v --version ' -- "$cur") )
+        fi
+    fi
+}
+
 _apttool_show()
 {
     local cur
@@ -37,4 +50,5 @@ _apttool_show()
 }
 
 complete -o bashdefault -o default -o filenames -F _apttool apttool
+complete -o bashdefault -o default -o filenames -F _apttool_installed apttool-installed
 complete -o bashdefault -o default -o filenames -F _apttool_show apttool-show
