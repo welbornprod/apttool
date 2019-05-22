@@ -1088,51 +1088,6 @@ def is_executable(filename):
     )
 
 
-def is_pkg_match(re_pat, pkg, **kwargs):
-    """ returns True/False if pkg matches the regex.
-        Arguments:
-            re_pat           : compiled regex pattern to match with.
-            pkg              : Package() to match.
-
-        Keyword Arguments:
-            desc_search      : if True, try matching descriptions.
-                               Default: True
-            reverse          : if True, opposite of matching. return packages
-                               that don't match.
-                               Default: False
-            installstate     : InstallStateEnum to match against.
-                               Default: InstallStateEnum.every
-    """
-
-    desc_search = kwargs.get('desc_search', True)
-    reverse = kwargs.get('reverse', False)
-    installstate = (
-        kwargs.get('installstate', InstallStateEnum.every) or
-        InstallStateEnum.every)
-
-    # Trim filtered packages.
-    if not installstate.matches_pkg(pkg):
-        return False
-
-    def matchfunc(targetstr, reverse=False):
-        rematch = re_pat.search(targetstr)
-        return (rematch is None) if reverse else (rematch is not None)
-
-    # Try matching the name. (reverse handled also.)
-    if matchfunc(pkg.name, reverse):
-        return True
-    if not desc_search:
-        return False
-
-    pkgdesc = get_pkg_description(pkg)
-
-    # Try matching description.
-    if pkgdesc and matchfunc(pkgdesc, reverse):
-        return True
-    # No match/no desc to search
-    return False
-
-
 def iter_history():
     """ Read dpkg.log and parse it's contents to yield HistoryLine()s
         with package names, install states, etc.
@@ -1522,17 +1477,6 @@ def print_status_err(*args, **kwargs):
     print_status(*args, **kwargs)
 
 
-def py_ver_at_least(major=0, minor=0, micro=0):
-    """ Returns True if the current python version is equal or greater to
-        the one given.
-    """
-    return (
-        sys.version_info.major >= major and
-        sys.version_info.minor >= minor and
-        sys.version_info.micro >= micro
-    )
-
-
 def query_build(patterns, all_patterns=False):
     """ Join query pattern arguments into a single regex pattern.
         Arguments:
@@ -1600,7 +1544,7 @@ def strip_arch(pkgname, force=False):
             (cache_main is not None) and
             cache_main.get(pkgname, None) is not None):
         return pkgname
-    name, colon, arch = pkgname.rpartition(':')
+    name, _, arch = pkgname.rpartition(':')
     if name:
         return name
     # No ':' in the name (arch is the name now).
@@ -1627,13 +1571,8 @@ class AptToolFilter(apt.cache.Filter):
         if not self.install_state.matches_pkg(pkg):
             return False
 
-        def matchfunc(targetstr, reverse=False):
-            rematch = self.pattern.search(targetstr)
-            matched = (rematch is None) if reverse else (rematch is not None)
-            return matched
-
         # Try matching the name. (reverse handled also.)
-        if matchfunc(pkg.name, self.reverse):
+        if self.match_str(pkg.name, self.reverse):
             return self.on_match(pkg)
         if not self.use_desc:
             return False
@@ -1641,12 +1580,22 @@ class AptToolFilter(apt.cache.Filter):
         pkgdesc = get_pkg_description(pkg)
 
         # Try matching description.
-        if pkgdesc and matchfunc(pkgdesc, self.reverse):
+        if pkgdesc and self.match_str(pkgdesc, self.reverse):
             return self.on_match(pkg)
         # No match/no desc to search
         return False
 
+    def match_str(self, targetstr, reverse=False):
+        rematch = self.pattern.search(targetstr)
+        if reverse:
+            return (rematch is None)
+        return (rematch is not None)
+
     def on_match(self, pkg):
+        """ This is called when the filter matches the package,
+            right now it just prints the package info.
+            It's called from `self.apply()`.
+        """
         print('\n{}'.format(
             pkg_format(
                 pkg,
@@ -2014,7 +1963,7 @@ class SimpleOpProgress(apt.progress.text.OpProgress):
         if percent:
             self.current_percent = percent
 
-    def done(self, otherarg=None):
+    def done(self, unused_arg=None):
         self.current_percent = 0
 
     def set_msg(self, s):
