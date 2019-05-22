@@ -89,7 +89,7 @@ except ImportError as exfmtblk:
 
 # ------------------------------- End Imports -------------------------------
 
-__version__ = '0.9.0'
+__version__ = '0.9.1'
 
 NAME = 'AptTool'
 
@@ -1623,7 +1623,6 @@ class AptToolFilter(apt.cache.Filter):
         self.print_no_ver = print_no_ver
 
     def apply(self, pkg):
-
         # Trim filtered packages.
         if not self.install_state.matches_pkg(pkg):
             return False
@@ -1631,7 +1630,7 @@ class AptToolFilter(apt.cache.Filter):
         def matchfunc(targetstr, reverse=False):
             rematch = self.pattern.search(targetstr)
             matched = (rematch is None) if reverse else (rematch is not None)
-            return self.on_match(pkg) if matched else False
+            return matched
 
         # Try matching the name. (reverse handled also.)
         if matchfunc(pkg.name, self.reverse):
