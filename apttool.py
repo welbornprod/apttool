@@ -89,7 +89,7 @@ except ImportError as exfmtblk:
 
 # ------------------------------- End Imports -------------------------------
 
-__version__ = '0.9.1'
+__version__ = '1.0.0'
 
 NAME = 'AptTool'
 
@@ -706,15 +706,6 @@ def cmd_search(
             reverse           : Reverses the match, to show packages that
                                 DON'T match the pattern.
     """
-    if dev_only:
-        # This little feature would be wrecked by adding '$' to the pattern.
-        if query.endswith('$'):
-            query = query[:-1]
-            queryend = '$'
-        else:
-            queryend = ''
-        # Adding 'dev' to the query to search for development packages.
-        query = '({})(.+)dev{}'.format(query, queryend)
     try:
         re_pat = re.compile(
             query,
@@ -736,6 +727,7 @@ def cmd_search(
         C('Searching ', 'blue'),
         C(install_state),
         ' ({})'.format(C('names only', 'blue')) if not use_desc else '',
+        ' ({})'.format(C('dev only', '#FFBB00')) if dev_only else '',
         ' {}'.format(C(query, 'cyan')),
         (
             ' ({})'.format(C('case-insensitive', 'red'))
@@ -746,6 +738,7 @@ def cmd_search(
     print_status(msg)
     cache.set_filter(AptToolFilter(
         re_pat,
+        _name_pat=re.compile(r'(.+dev)') if dev_only else None,
         use_desc=use_desc,
         install_state=install_state,
         reverse=reverse,
@@ -1555,9 +1548,11 @@ def strip_arch(pkgname, force=False):
 class AptToolFilter(apt.cache.Filter):
     """ A filter that uses apttool config to filter packages. """
     def __init__(
-            self, pattern, use_desc=True, install_state=None, reverse=False,
+            self, pattern, _name_pat=None, use_desc=True, install_state=None,
+            reverse=False,
             print_no_desc=False, print_no_ver=False):
         self.pattern = pattern
+        self.name_pat = _name_pat
         self.use_desc = use_desc
         self.install_state = install_state or InstallStateEnum.every
         self.reverse = reverse
@@ -1571,6 +1566,9 @@ class AptToolFilter(apt.cache.Filter):
         if not self.install_state.matches_pkg(pkg):
             return False
 
+        # Trim forced name matches (to implement dev-only packages).
+        if not self.match_name(pkg):
+            return False
         # Try matching the name. (reverse handled also.)
         if self.match_str(pkg.name, self.reverse):
             return self.on_match(pkg)
@@ -1584,6 +1582,11 @@ class AptToolFilter(apt.cache.Filter):
             return self.on_match(pkg)
         # No match/no desc to search
         return False
+
+    def match_name(self, pkg):
+        if self.name_pat is None:
+            return True
+        return self.name_pat.search(pkg.name) is not None
 
     def match_str(self, targetstr, reverse=False):
         rematch = self.pattern.search(targetstr)
