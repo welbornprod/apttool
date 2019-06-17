@@ -108,7 +108,7 @@ USAGESTR = """{name} v. {version}
         {script} (-l | -L) PACKAGES... [-C] [-q] [-s]
         {script} -u [-C] [-q]
         {script} -V PACKAGES... [-C] [-a] [-q] [-s]
-        {script} PATTERNS... [-a] [-C] [-I | -N] [-D | -n] [-q] [-r] [-s] [-x]
+        {script} PATTERNS... [-a] [-C] [-I | -N] [-D] [-n] [-q] [-r] [-s] [-x]
 
     Options:
         COUNT                        : Number of history lines to return.
@@ -714,7 +714,7 @@ def cmd_search(
         else:
             queryend = ''
         # Adding 'dev' to the query to search for development packages.
-        query = '{}(.+)dev{}'.format(query, queryend)
+        query = '({})(.+)dev{}'.format(query, queryend)
     try:
         re_pat = re.compile(
             query,
@@ -739,7 +739,7 @@ def cmd_search(
         ' {}'.format(C(query, 'cyan')),
         (
             ' ({})'.format(C('case-insensitive', 'red'))
-            if not case_insensitive
+            if case_insensitive
             else ''
         ),
     )
