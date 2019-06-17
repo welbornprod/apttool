@@ -3,7 +3,7 @@
 # This is just an alias for `dpkg (-l|-s) PACKAGE...`, with colors.
 # -Christopher Welborn 11-16-2016
 appname="apttool-show"
-appversion="0.0.2"
+appversion="0.0.3"
 apppath="$(readlink -f "${BASH_SOURCE[0]}")"
 appscript="${apppath##*/}"
 # appdir="${apppath%/*}"
@@ -120,7 +120,7 @@ function print_pkg_info {
 
 function print_usage {
     # Show usage reason if first arg is available.
-    [[ -n "$1" ]] && echo_err "\n$1\n"
+    [[ -n "$1" ]] && echo_err "$1"
 
     echo "$appname v. $appversion
 

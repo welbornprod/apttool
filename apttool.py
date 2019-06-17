@@ -2,22 +2,21 @@
 # -*- coding: utf-8 -*-
 """ apttool.py
     Provides a few apt-related functions based on the 'apt' module.
-    -Christopher Welborn
-    06-2013
+    -Christopher Welborn 06-??-2013
+
+    Revisited: 4-7-2019
 """
 
 from collections import namedtuple, UserList
 from contextlib import suppress
 from datetime import datetime
 from enum import Enum
-import os.path
+import os
 import re
 import stat
 import struct
 import sys
 from time import time
-# for IterCache()
-import weakref
 
 
 def import_err(name, exc, module=None):
@@ -39,7 +38,7 @@ def import_err(name, exc, module=None):
             '\nError message: {exc}'
         )).format(
             name=propername,
-            module=modname if modname and modname != module else module,
+            module=modname if (modname and modname != module) else module,
             exc=exc,
         ),
         file=sys.stderr
@@ -90,7 +89,7 @@ except ImportError as exfmtblk:
 
 # ------------------------------- End Imports -------------------------------
 
-__version__ = '0.8.2'
+__version__ = '1.0.0'
 
 NAME = 'AptTool'
 
@@ -109,7 +108,7 @@ USAGESTR = """{name} v. {version}
         {script} (-l | -L) PACKAGES... [-C] [-q] [-s]
         {script} -u [-C] [-q]
         {script} -V PACKAGES... [-C] [-a] [-q] [-s]
-        {script} PATTERNS... [-a] [-C] [-I | -N] [-D | -n] [-q] [-r] [-s] [-x]
+        {script} PATTERNS... [-a] [-C] [-I | -N] [-D] [-n] [-q] [-r] [-s] [-x]
 
     Options:
         COUNT                        : Number of history lines to return.
@@ -217,17 +216,18 @@ def main(argd):
         print_example_usage()
         return 0
 
-    # Search (iter_open the cache, not pre-load. for performance)
+    # Search.
     if argd['PATTERNS']:
         query = query_build(argd['PATTERNS'], all_patterns=argd['--all'])
         return cmd_search(
             query,
-            desc_search=not argd['--names'],
+            use_desc=not argd['--names'],
             print_no_desc=argd['--short'],
-            installstate=InstallStateFilter.from_argd(argd),
+            install_state=InstallStateEnum.from_argd(argd),
             case_insensitive=argd['--ignorecase'],
             dev_only=argd['--dev'],
-            reverse=argd['--reverse'])
+            reverse=argd['--reverse']
+        )
 
     if argd['--history']:
         # Just show apt history and exit.
@@ -344,7 +344,7 @@ def cmd_contains_file(name, shortnamesonly=False):
             print('    {}'.format('\n    '.join(matchingfiles)))
 
     pluralfiles = 'file' if totalfiles == 1 else 'files'
-    pluralpkgs = 'package' if totalpkgs == 1 else 'packages'
+    pluralpkgs = 'package.' if totalpkgs == 1 else 'packages.'
     print_status(
         '\nFound',
         C(totalfiles, fore='blue', style='bright'),
@@ -352,7 +352,6 @@ def cmd_contains_file(name, shortnamesonly=False):
         'in',
         C(totalpkgs, fore='blue', style='bright'),
         pluralpkgs,
-        '.'
     )
     return 0
 
@@ -362,12 +361,12 @@ def cmd_dependencies(pkgname, installstate=None, short=False):
         Optionally, filter by installed or uninstalled.
         Arguments:
             pkgname       : (str) Package name to check dependencies for.
-            installstate  : InstallStateFilter, to filter dependency list.
-                            Default: InstallStateFilter.every
+            installstate  : InstallStateEnum, to filter dependency list.
+                            Default: InstallStateEnum.every
             short         : Use shorter output.
     """
     status = noop if short else print_status
-    installstate = installstate or InstallStateFilter.every
+    installstate = installstate or InstallStateEnum.every
 
     package = cache_main.get(pkgname, None)
     if package is None:
@@ -397,7 +396,7 @@ def cmd_dependencies(pkgname, installstate=None, short=False):
                 )
                 totalstate += 1
 
-    if installstate == InstallStateFilter.every:
+    if installstate == InstallStateEnum.every:
         status('\nTotal: {}'.format(total))
     else:
         statestr = str(installstate).title()
@@ -512,10 +511,14 @@ def cmd_installed_files(pkgname, execs_only=False, short=False):
         return 1
 
     if not pkg_install_state(package):
-        print_err(''.join((
-            '\nThis package is not installed: {}',
+        print_err(
+            '\nThis package is not installed: {}'.format(
+                C(package.name, 'blue')
+            ),
             '\nCan\'t get installed files for ',
-            'uninstalled packages.')).format(package.name))
+            'uninstalled packages.',
+            sep=''
+        )
         return 1
 
     if not hasattr(package, 'installed_files'):
@@ -650,12 +653,12 @@ def cmd_reverse_dependencies(pkgname, installstate=None, short=False):
         Optionally, filter by installed or uninstalled.
         Arguments:
             pkgname       : (str) Package name to check dependencies for.
-            installstate  : InstallStateFilter, to filter dependency list.
-                            Default: InstallStateFilter.every
+            installstate  : InstallStateEnum, to filter dependency list.
+                            Default: InstallStateEnum.every
             short         : Use shorter output.
     """
     status = noop if short else print_status
-    installstate = installstate or InstallStateFilter.every
+    installstate = installstate or InstallStateEnum.every
     try:
         package = cache_main[pkgname]
     except KeyError:
@@ -675,7 +678,7 @@ def cmd_reverse_dependencies(pkgname, installstate=None, short=False):
                     print(pkg_format(pkg, no_ver=short, no_desc=short))
                     totalstate += 1
 
-    if installstate == InstallStateFilter.every:
+    if installstate == InstallStateEnum.every:
         status('\nTotal: {}'.format(total))
     else:
         statestr = str(installstate).title()
@@ -683,70 +686,67 @@ def cmd_reverse_dependencies(pkgname, installstate=None, short=False):
     return 0 if totalstate > 0 else 1
 
 
-def cmd_search(query, **kwargs):
+def cmd_search(
+        query, use_desc=True, print_no_desc=False, print_no_ver=False,
+        install_state=None, case_insensitive=False, dev_only=False,
+        reverse=False):
     """ print results while searching the cache...
         Arguments:
             query             : Seach term for package name/desc.
-
-        Keyword Arguments:
+            use_desc          : Whether to search inside pkg descs.
+                                Default: True
             print_no_desc     : If True, don't print descriptions of packages.
                                 Default: False
             print_no_ver      : If True, don't print the latest versions.
                                 Default: False
-            installstate      : InstallStateFilter to filter packages.
-                                Default: InstallStateFilter.every
-
-            Other keyword arguments are forwarded to search_itercache().
+            install_state     : InstallStateEnum to filter packages.
+                                Default: InstallStateEnum.every
+            case_insensitive  : Whether searches are case insensitive.
+            dev_only          : Whether to search only dev packages.
+            reverse           : Reverses the match, to show packages that
+                                DON'T match the pattern.
     """
-
-    print_no_desc = kwargs.get('print_no_desc', False)
-    print_no_ver = kwargs.get('pront_no_ver', False)
-    dev_only = kwargs.get('dev_only', False)
-    if hasattr(query, 'pattern'):
-        # Extract pattern from compiled regex for modification.
-        query = query.pattern
-
-    if dev_only:
-        # This little feature would be wrecked by adding '$' to the pattern.
-        if query.endswith('$'):
-            query = query[:-1]
-            queryend = '$'
-        else:
-            queryend = ''
-        # Adding 'dev' to the query to search for development packages.
-        query = '{}(.+)dev{}'.format(query, queryend)
-
-    # Initialize cache without doing an .open() (do iter_open() instead)
-    print_status('Initializing Cache...')
-    cache = IterCache(do_open=False)
-    cache._pre_iter_open()
-    ignorecase = kwargs.get('case_insensitive', False)
-    print_status(
-        'Searching ~{} packages for {}{}'.format(
-            cache.rough_size,
+    try:
+        re_pat = re.compile(
             query,
-            ' (case-insensitive)' if ignorecase else '',
+            re.IGNORECASE if case_insensitive else 0)
+    except re.error as ex:
+        raise BadSearchQuery(query, ex)
+    if sys.stdout.isatty():
+        spinner = AnimatedProgress(
+            'Loading APT Cache...',
+            fmt=' {frame} {elapsed:<2.0f}s {text}',
+            frames=Frames.dots_orbit.as_gradient(name='blue', style='bright'),
         )
+        with spinner:
+            cache = apt.cache.FilteredCache(progress=oprogress)
+    else:
+        # No animated spinner, stdout is not a tty.
+        cache = apt.cache.FilteredCache(progress=oprogress)
+    msg = C('').join(
+        C('Searching ', 'blue'),
+        C(install_state),
+        ' ({})'.format(C('names only', 'blue')) if not use_desc else '',
+        ' ({})'.format(C('dev only', '#FFBB00')) if dev_only else '',
+        ' {}'.format(C(query, 'cyan')),
+        (
+            ' ({})'.format(C('case-insensitive', 'red'))
+            if case_insensitive
+            else ''
+        ),
     )
+    print_status(msg)
+    cache.set_filter(AptToolFilter(
+        re_pat,
+        _name_pat=re.compile(r'(.+dev)') if dev_only else None,
+        use_desc=use_desc,
+        install_state=install_state,
+        reverse=reverse,
+        print_no_desc=print_no_desc,
+        print_no_ver=print_no_ver,
+    ))
 
-    # Update arguments for use with search_itercache().
-    kwargs.update({
-        'cache': cache,
-        'progress': None,
-    })
-
-    result_cnt = 0
-
-    for result in search_itercache(query, **kwargs):
-        print('\n{}'.format(
-            pkg_format(
-                result,
-                no_desc=print_no_desc,
-                no_ver=print_no_ver
-            )
-        ))
-        result_cnt += 1
-
+    result_cnt = len(cache)
     print_status('\nFinished searching, found {} {}.'.format(
         str(result_cnt),
         'result' if result_cnt == 1 else 'results'
@@ -885,7 +885,7 @@ def cmdmap_build(argd):
                 argd['PACKAGES']
             ),
             'kwargs': {
-                'installstate': InstallStateFilter.from_argd(argd),
+                'installstate': InstallStateEnum.from_argd(argd),
                 'short': argd['--short']
             }
         },
@@ -942,7 +942,7 @@ def cmdmap_build(argd):
                 argd['PACKAGES']
             ),
             'kwargs': {
-                'installstate': InstallStateFilter.from_argd(argd),
+                'installstate': InstallStateEnum.from_argd(argd),
                 'short': argd['--short']
             }
         },
@@ -1045,7 +1045,7 @@ def get_terminal_size():
             cr = struct.unpack('hh',
                                fcntl.ioctl(fd, termios.TIOCGWINSZ, '1234'))
             return cr
-        except:
+        except Exception:
             pass
     cr = ioctl_GWINSZ(0) or ioctl_GWINSZ(1) or ioctl_GWINSZ(2)
     if not cr:
@@ -1053,12 +1053,12 @@ def get_terminal_size():
             fd = os.open(os.ctermid(), os.O_RDONLY)
             cr = ioctl_GWINSZ(fd)
             os.close(fd)
-        except:
+        except Exception:
             pass
     if not cr:
         try:
             cr = (os.environ['LINES'], os.environ['COLUMNS'])
-        except:
+        except Exception:
             return None
     return int(cr[1]), int(cr[0])
 
@@ -1079,51 +1079,6 @@ def is_executable(filename):
         stat.S_ISREG(st.st_mode) and
         st.st_mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     )
-
-
-def is_pkg_match(re_pat, pkg, **kwargs):
-    """ returns True/False if pkg matches the regex.
-        Arguments:
-            re_pat           : compiled regex pattern to match with.
-            pkg              : Package() to match.
-
-        Keyword Arguments:
-            desc_search      : if True, try matching descriptions.
-                               Default: True
-            reverse          : if True, opposite of matching. return packages
-                               that don't match.
-                               Default: False
-            installstate     : InstallStateFilter to match against.
-                               Default: InstallStateFilter.every
-    """
-
-    desc_search = kwargs.get('desc_search', True)
-    reverse = kwargs.get('reverse', False)
-    installstate = (
-        kwargs.get('installstate', InstallStateFilter.every) or
-        InstallStateFilter.every)
-
-    # Trim filtered packages.
-    if not installstate.matches_pkg(pkg):
-        return False
-
-    def matchfunc(targetstr, reverse=False):
-        rematch = re_pat.search(targetstr)
-        return (rematch is None) if reverse else (rematch is not None)
-
-    # Try matching the name. (reverse handled also.)
-    if matchfunc(pkg.name, reverse):
-        return True
-    if not desc_search:
-        return False
-
-    pkgdesc = get_pkg_description(pkg)
-
-    # Try matching description.
-    if pkgdesc and matchfunc(pkgdesc, reverse):
-        return True
-    # No match/no desc to search
-    return False
 
 
 def iter_history():
@@ -1329,13 +1284,13 @@ def pkg_install_state(pkg, expected=None):
     """ Returns True/False whether this package is installed.
         Uses old and new apt API methods.
 
-        If expected is passed (a InstallStateFilter enum),
-        returns True if the InstallStateFilter matches the packages install
+        If expected is passed (a InstallStateEnum enum),
+        returns True if the InstallStateEnum matches the packages install
         state, or if InstallState.every is used.
     """
-    expected = expected or InstallStateFilter.installed
-    # This function is useless with InstallStateFilter.every.
-    if expected == InstallStateFilter.every:
+    expected = expected or InstallStateEnum.installed
+    # This function is useless with InstallStateEnum.every.
+    if expected == InstallStateEnum.every:
         return True
 
     if hasattr(pkg, 'isInstalled'):
@@ -1361,9 +1316,9 @@ def pkg_install_state(pkg, expected=None):
         )
         actualstate = False
 
-    if expected == InstallStateFilter.installed:
+    if expected == InstallStateEnum.installed:
         return actualstate
-    if expected == InstallStateFilter.uninstalled:
+    if expected == InstallStateEnum.uninstalled:
         return not actualstate
     # Should not reach this.
     print_err(
@@ -1376,54 +1331,97 @@ def print_err(*args, **kwargs):
     """ Like print(), except `file` is set to sys.stderr by default. """
     kwargs['file'] = kwargs.get('file', sys.stderr)
     return print(
-        C(kwargs.get('sep', ' ').join(args), fore='red'),
+        C(kwargs.get('sep', ' ')).join(
+            a if isinstance(a, C) else C(a, 'red')
+            for a in args
+        ),
         **kwargs
     )
 
 
 def print_example_usage():
     """ Print specific usage examples when -? is used. """
-    print("""{name} v. {ver}
+    CmdExample = namedtuple('CmdExample', ('cmd', 'desc'))
 
-Example Usage:
+    print('\n'.join((
+        '{name} v. {ver}'.format(
+            name=C(NAME, 'blue', style='bright'),
+            ver=C(__version__, 'blue'),
+        ),
+        '\nExample Usage:',
+    )))
+    cmdexamples = (
+        CmdExample(
+            'foo -I',
+            'Shows installed packages with \'foo\' in the name or desc.',
+        ),
+        CmdExample(
+            'bar -n -N',
+            'Show non-installed packages with \'bar\' in the name only.',
+        ),
+        CmdExample(
+            '-f python',
+            'Show installed files for the \'python\' package.',
+        ),
+        CmdExample(
+            '-e python',
+            'Show installed executables for the \'python\' package.',
+        ),
+        CmdExample(
+            '-S python',
+            'Show suggested packages for the \'python\' package.',
+        ),
+        CmdExample(
+            '-l pythonfoo',
+            '\n    '.join((
+                'Determine whether a full package name exists in the cache.',
+                'This is quicker than a full search.',
+            ))
+        ),
+        CmdExample(
+            '-H install',
+            'Search dpkg history for latest installs/half-installs.',
+        ),
+        CmdExample(
+            '-c foo',
+            'Show packages containing files with \'foo\' in the path.',
+        ),
+        CmdExample(
+            '-h',
+            'Show full help/options.',
+        ),
+    )
+    for cmdexample in cmdexamples:
+        print('\n    {}'.format(C(cmdexample.desc, 'cyan')))
+        print('    {} {}'.format(
+            C(SCRIPT, 'blue', style='bright'),
+            C(cmdexample.cmd, 'blue'),
+        ))
 
-    Shows installed packages with 'foo' in the name or desc.
-        {script} foo -I
+    StateExample = namedtuple('StateExample', ('char', 'desc'))
+    print('\nMarker Legend:')
+    stateexamples = (
+        StateExample('i', 'package is installed'),
+        StateExample('u', 'package is not installed'),
+        StateExample('?', 'package name was not found in the cache'),
+    )
+    for stateexample in stateexamples:
+        print('    {} = {}'.format(
+            C(stateexample.char, 'blue').join('[', ']'),
+            C(stateexample.desc, 'cyan'),
+        ))
 
-    Show non-installed packages with 'bar' in the name only.
-        {script} bar -n -N
-
-    Show installed files for the 'python' package.
-        {script} -f python
-
-    Show installed executables for the 'python' package.
-        {script} -e python
-
-    Show suggested packages for the 'python' package.
-        {script} -S python
-
-    Determine whether a full package name exists in the cache.
-    This is quicker than a full search.
-        {script} -l pythonfoo
-
-    Search dpkg history for latest installs/half-installs.
-        {script} -H install
-
-    Show packages containing files with 'foo' in the path.
-        {script} -c foo
-
-    Show full help/options.
-        {script} -h
-
-Marker Legend:
-    [i] = package is installed
-    [u] = package is not installed
-    [?] = package name was not found in the cache
-
-Notes:
-    If no options are given, the default behaviour is to search for
-    packages by name and description, then print results.
-    """.format(name=NAME, ver=__version__, script=SCRIPT))
+    print('\nNotes:')
+    print(
+        C(
+            '\n'.join((
+                '    If no options are given, the default behaviour is to',
+                '    search for packages by name and description, then',
+                '    print results.',
+            )),
+            'cyan',
+        )
+    )
 
 
 def print_missing_pkg(pkgname):
@@ -1500,13 +1498,18 @@ def run_preload_cmd(argd):
     """
     status = noop if argd['--short'] else print_status
     # Initialize
-    spinner = AnimatedProgress(
-        'Loading APT Cache...',
-        fmt=' {frame} {elapsed:<2.0f}s {text}',
-        frames=Frames.dots_orbit.as_gradient(name='blue', style='bright'),
-    )
-    with spinner:
+    if sys.stdout.isatty():
+        spinner = AnimatedProgress(
+            'Loading APT Cache...',
+            fmt=' {frame} {elapsed:<2.0f}s {text}',
+            frames=Frames.dots_orbit.as_gradient(name='blue', style='bright'),
+        )
+        with spinner:
+            cache_load()
+    else:
+        # No amimated spinner, stdout is not a tty.
         cache_load()
+
     if not cache_main:
         print_err('Failed to load apt cache!')
         return 1
@@ -1523,66 +1526,6 @@ def run_preload_cmd(argd):
             )
 
 
-def search_itercache(regex, **kwargs):
-    """ search while building the cache,
-        Arguments:
-            regex             :  regex pattern to search for
-
-        Keyword Arguments:
-            case_insensitive  : if True, serach pattern is compiled with
-                                re.IGNORECASE.
-            desc_search       : if True, search through descriptions also,
-                                not just names.
-                                Default: True
-            installstate      : InstallStateFilter to filter packages.
-                                Default: InstallStateFilter.every
-            reverse           : if True, yield packages that DON'T match.
-                                Default: False
-            progress          : apt.OpProgress() to report to on iter_open()
-                                Default: None
-            cache             : initialized (not .open()ed IterCache())
-                                if you need to do it yourself.
-    """
-
-    # parse args
-    desc_search = kwargs.get('desc_search', True)
-    progress = kwargs.get('progress', None)
-    reverse = kwargs.get('reverse', False)
-    case_insensitive = kwargs.get('case_insensitive', False)
-    installstate = (
-        kwargs.get('installstate', InstallStateFilter.every) or
-        InstallStateFilter.every
-    )
-
-    # initialize Cache object without opening,
-    # or use existing cache passed in with cache keyword.
-    cache = kwargs.get('cache', IterCache(do_open=False))
-
-    if cache is None:
-        raise CacheNotLoaded(
-            'No apt cache to search, it could not be loaded.'
-        )
-
-    try:
-        re_pat = re.compile(
-            regex,
-            re.IGNORECASE if case_insensitive else 0)
-    except re.error as ex:
-        raise BadSearchQuery(regex, ex)
-
-    is_match = (
-        lambda pkg: is_pkg_match(
-            re_pat,
-            pkg,
-            desc_search=desc_search,
-            reverse=reverse,
-            installstate=installstate)
-    )
-    # iterate the pkgs as they are loaded.
-    for pkg in filter(is_match, cache.iter_open(progress=progress)):
-        yield pkg
-
-
 def strip_arch(pkgname, force=False):
     """ Strip the architecture from a package name (python:i386).
         If `force` is used, the arch is stripped unconditionally.
@@ -1594,7 +1537,7 @@ def strip_arch(pkgname, force=False):
             (cache_main is not None) and
             cache_main.get(pkgname, None) is not None):
         return pkgname
-    name, colon, arch = pkgname.rpartition(':')
+    name, _, arch = pkgname.rpartition(':')
     if name:
         return name
     # No ':' in the name (arch is the name now).
@@ -1602,19 +1545,104 @@ def strip_arch(pkgname, force=False):
 
 
 # CLASSES -----------------------------------------------
-class InstallStateFilter(Enum):
+class AptToolFilter(apt.cache.Filter):
+    """ A filter that uses apttool config to filter packages. """
+    def __init__(
+            self, pattern, _name_pat=None, use_desc=True, install_state=None,
+            reverse=False,
+            print_no_desc=False, print_no_ver=False):
+        self.pattern = pattern
+        self.name_pat = _name_pat
+        self.use_desc = use_desc
+        self.install_state = install_state or InstallStateEnum.every
+        self.reverse = reverse
+
+        # Display options
+        self.print_no_desc = print_no_desc
+        self.print_no_ver = print_no_ver
+
+    def apply(self, pkg):
+        # Trim filtered packages.
+        if not self.install_state.matches_pkg(pkg):
+            return False
+
+        # Trim forced name matches (to implement dev-only packages).
+        if not self.match_name(pkg):
+            return False
+        # Try matching the name. (reverse handled also.)
+        if self.match_str(pkg.name, self.reverse):
+            return self.on_match(pkg)
+        if not self.use_desc:
+            return False
+
+        pkgdesc = get_pkg_description(pkg)
+
+        # Try matching description.
+        if pkgdesc and self.match_str(pkgdesc, self.reverse):
+            return self.on_match(pkg)
+        # No match/no desc to search
+        return False
+
+    def match_name(self, pkg):
+        if self.name_pat is None:
+            return True
+        return self.name_pat.search(pkg.name) is not None
+
+    def match_str(self, targetstr, reverse=False):
+        rematch = self.pattern.search(targetstr)
+        if reverse:
+            return (rematch is None)
+        return (rematch is not None)
+
+    def on_match(self, pkg):
+        """ This is called when the filter matches the package,
+            right now it just prints the package info.
+            It's called from `self.apply()`.
+        """
+        print('\n{}'.format(
+            pkg_format(
+                pkg,
+                no_desc=self.print_no_desc,
+                no_ver=self.print_no_ver
+            )
+        ))
+        return True
+
+
+# Fatal Errors that will end this script when raised.
+class BadSearchQuery(ValueError):
+    def __init__(self, pattern, re_error):
+        self.pattern = getattr(pattern, 'pattern', str(pattern))
+        self.message = str(re_error)
+
+    def __str__(self):
+        return 'Bad search query \'{}\': {}'.format(
+            self.pattern,
+            self.message
+        )
+
+
+class CacheNotLoaded(Exception):
+    pass
+
+
+class InstallStateEnum(Enum):
 
     """ For querying packages with a certain install state. """
     uninstalled = -1
     every = 0
     installed = 1
 
+    def __colr__(self):
+        """ Colr representation. """
+        return C(str(self), 'blue', style='bright')
+
     def __str__(self):
         """ Enhanced representation for console. """
         return {
-            InstallStateFilter.uninstalled.value: 'uninstalled',
-            InstallStateFilter.every.value: 'all',
-            InstallStateFilter.installed.value: 'installed'
+            InstallStateEnum.uninstalled.value: 'uninstalled',
+            InstallStateEnum.every.value: 'all',
+            InstallStateEnum.installed.value: 'installed'
         }.get(self.value, 'unknown')
 
     def filter_pkgs(self, pkglst):
@@ -1628,7 +1656,7 @@ class InstallStateFilter(Enum):
 
     @classmethod
     def from_argd(cls, argd):
-        """ Maps a filter arg to an actual InstallStateFilter. """
+        """ Maps a filter arg to an actual InstallStateEnum. """
         if argd['--INSTALLED']:
             return cls.installed
         if argd['--NOTINSTALLED']:
@@ -1638,273 +1666,6 @@ class InstallStateFilter(Enum):
     def matches_pkg(self, pkg):
         """ Return True if the `pkg` matches this install state filter. """
         return pkg_install_state(pkg, expected=self)
-
-
-class SimpleOpProgress(apt.progress.text.OpProgress):
-
-    """ Handles progress updates for Operations """
-
-    def __init__(self, msg=None):
-        self.msg = msg if msg else 'Doing operation'
-        self.current_percent = 0
-
-    def update(self, percent=None):
-        if percent:
-            self.current_percent = percent
-
-    def done(self, otherarg=None):
-        self.current_percent = 0
-
-    def set_msg(self, s):
-        self.msg = s
-
-
-class SimpleFetchProgress(
-        apt.progress.text.AcquireProgress, apt.progress.text.OpProgress):
-    """ Handles progress updates for Fetches """
-
-    def __init__(self, msg=None):
-        self.msg = msg if msg else 'Fetching'
-        apt.progress.text.OpProgress.__init__(self)
-        apt.progress.text.AcquireProgress.__init__(self)
-
-    def _write(self, msg, newline=True, maximize=False):
-        """ Write the message on the terminal, fill remaining space. """
-        self._file.write('\r')
-        self._file.write(msg)
-        msglen = len(strip_codes(msg))
-        # Fill remaining stuff with whitespace
-        if self._width > msglen:
-            self._file.write((self._width - msglen) * ' ')
-        elif maximize:  # Needed for OpProgress.
-            self._width = max(self._width, msglen)
-        if newline:
-            self._file.write('\n')
-        else:
-            self._file.flush()
-
-    def fail(self, item):
-        """ Called when an item is failed. """
-        apt.progress.base.AcquireProgress.fail(self, item)
-        if item.owner.status == item.owner.STAT_DONE:
-            self._write(' '.join((
-                str(C(_('Ign'), fore='yellow')),
-                item.description)
-            ))
-        else:
-            self._write(' '.join((
-                str(C(_('Err'), fore='red')),
-                item.description)
-            ))
-            if item.owner.error_text:
-                self._write(
-                    ' {}'.format(str(C(item.owner.error_text, fore='red')))
-                )
-
-    def fetch(self, item):
-        """ Called when some of the item's data is fetched. """
-        apt.progress.base.AcquireProgress.fetch(self, item)
-        # It's complete already (e.g. Hit)
-        if item.owner.complete:
-            return
-        item.owner.id = self._id
-        self._id += 1
-        line = '{}{} {}'.format(
-            C(_('Get:'), fore='lightblue'),
-            C(item.owner.id, fore='blue', style='bright'),
-            C(item.description, fore='green')
-        )
-
-        if item.owner.filesize:
-            line += ''.join((' ', self.format_filesize(item.owner.filesize)))
-
-        self._write(line)
-
-    @staticmethod
-    def format_filesize(filesize):
-        """ Format/colorize a file size. """
-
-        sizeraw = apt_pkg.size_to_str(filesize).split()
-        if len(sizeraw) == 1:
-            size = sizeraw[0]
-            multiplier = ''
-        else:
-            size, multiplier = sizeraw
-
-        return '[{} {}]'.format(
-            C(size, fore='blue'),
-            C(''.join((multiplier, 'B')), fore='lightblue')
-        )
-
-    def ims_hit(self, item):
-        """Called when an item is update (e.g. not modified on the server)."""
-        apt.progress.base.AcquireProgress.ims_hit(self, item)
-        line = ' '.join((
-            str(C(_('Hit'), fore='green')),
-            item.description
-        ))
-        if item.owner.filesize:
-            line += ''.join((' ', self.format_filesize(item.owner.filesize)))
-        self._write(line)
-
-    def start(self):
-        print_status(self.msg)
-
-    def stop(self):
-        print_status('\nFinished ' + self.msg)
-
-    def set_msg(self, s):
-        self.msg = s
-
-
-class SimpleInstallProgress(apt.progress.base.InstallProgress):
-
-    """ Handles progress updates for Installs """
-
-    def __init__(self, msg=None, pkgname=None):
-        self.msg = msg if msg else 'Installing'
-        self.pkgname = pkgname if pkgname else None
-
-        apt.progress.base.InstallProgress.__init__(self)
-        # Redirect dpkg's messages to stdout.
-        self.writefd = sys.stdout
-
-    def error(self, pkg, errormsg):
-        """ Handles errors from dpkg. """
-
-        print_err(
-            '\nError while installing: {}\n{}'.format(pkg.name, errormsg)
-        )
-
-    def finish_update(self):
-        """ Handles end of installation """
-
-        if self.pkgname:
-            print_status(
-                '\nFinished {}: {}'.format(self.msg.lower(), self.pkgname)
-            )
-
-
-class IterCache(apt.Cache):
-
-    """ Allows searching the package cache while loading. """
-
-    def __init__(self, progress=None, rootdir=None,
-                 memonly=False, do_open=True):
-        self._cache = None
-        self._depcache = None
-        self._records = None
-        self._list = None
-        self._callbacks = {}
-        self._callbacks2 = {}
-        self._weakref = weakref.WeakValueDictionary()
-        self._set = set()
-        self._fullnameset = set()
-        self._changes_count = -1
-        self._sorted_set = None
-        if hasattr(self, 'connect2'):
-            # Use newer method in case of reference cycles.
-            self.connect2('cache_post_open', apt.Cache._inc_changes_count)
-            self.connect2('cache_post_change', apt.Cache._inc_changes_count)
-        else:
-            self.connect('cache_post_open', self._inc_changes_count)
-            self.connect('cache_post_change', self._inc_changes_count)
-
-        if memonly:
-            # force apt to build its caches in memory
-            apt_pkg.config.set('Dir::Cache::pkgcache', '')
-        if rootdir:
-            if os.path.exists(rootdir + '/etc/apt/apt.conf'):
-                apt_pkg.read_config_file(apt_pkg.config,
-                                         rootdir + '/etc/apt/apt.conf')
-            if os.path.isdir(rootdir + '/etc/apt/apt.conf.d'):
-                apt_pkg.read_config_dir(apt_pkg.config,
-                                        rootdir + '/etc/apt/apt.conf.d')
-            apt_pkg.config.set('Dir', rootdir)
-            apt_pkg.config.set('Dir::State::status',
-                               rootdir + '/var/lib/dpkg/status')
-            # also set dpkg to the rootdir path so that its called for the
-            # --print-foreign-architectures call
-            apt_pkg.config.set('Dir::bin::dpkg',
-                               os.path.join(rootdir, 'usr', 'bin', 'dpkg'))
-            # create required dirs/files when run with special rootdir
-            # automatically
-            self._check_and_create_required_dirs(rootdir)
-            # Call InitSystem so the change to Dir::State::Status is actually
-            # recognized (LP: #320665)
-            apt_pkg.init_system()
-
-        if do_open:
-            self.open(progress)
-
-    def _pre_iter_open(self, progress=None):
-        """ Things to do before the actual iter_open,
-            this allows you to get the rough size before iterating.
-        """
-
-        self._run_callbacks('cache_pre_open')
-
-        self._cache = apt_pkg.Cache(progress)
-        self._depcache = apt_pkg.DepCache(self._cache)
-        self._records = apt_pkg.PackageRecords(self._cache)
-        self._list = apt_pkg.SourceList()
-        self._list.read_main_list()
-        self._set.clear()
-        self._fullnameset.clear()
-        self._sorted_set = None
-        self._weakref.clear()
-
-        self._have_multi_arch = len(apt_pkg.get_architectures()) > 1
-        self.rough_size = len(self._cache.packages)
-
-    def iter_open(self, progress=None):
-        """ Open the package cache, yielding packages as they are loaded
-        """
-        if progress is None:
-            progress = apt.progress.base.OpProgress()
-        self.op_progress = progress
-
-        # Need to load the cache?
-        if self._cache is None:
-            self._pre_iter_open(progress=progress)
-
-        progress.op = _('Building data structures')
-        i = last = 0
-        size = len(self._cache.packages)
-
-        for pkg in self._cache.packages:
-            if progress is not None and last + 100 < i:
-                progress.update(i / float(size) * 100)
-                last = i
-            # drop stuff with no versions (cruft)
-            if pkg.has_versions:
-                pkgname = pkg.get_fullname(pretty=True)
-                self._set.add(pkgname)
-                if self._have_multi_arch:
-                    self._fullnameset.add(pkg.get_fullname(pretty=False))
-                # Yield this package as it is loaded...
-                yield self.__getitem__(pkgname)
-
-            i += 1
-
-        progress.done()
-        self._run_callbacks('cache_post_open')
-
-    def iter_open_no_progress(self):
-        """ same as iter_open, with no progress-related features.
-            possible performance enhancement, not tested.
-        """
-
-        if self._cache is None:
-            self._pre_iter_open(progress=None)
-
-        for pkg in self._cache.packages:
-            if pkg.has_versions:
-                pkgname = pkg.get_fullname(pretty=True)
-                self._set.add(pkgname)
-                if self._have_multi_arch:
-                    self._fullnameset.add(pkg.get_fullname(pretty=False))
-                yield self.__getitem__(pkgname)
 
 
 # History package info.
@@ -2193,21 +1954,149 @@ class PackageVersions(UserList):
         return str(fmt)
 
 
-# Fatal Errors that will end this script when raised.
-class BadSearchQuery(ValueError):
-    def __init__(self, pattern, re_error):
-        self.pattern = getattr(pattern, 'pattern', str(pattern))
-        self.message = str(re_error)
+class SimpleOpProgress(apt.progress.text.OpProgress):
 
-    def __str__(self):
-        return 'Bad search query \'{}\': {}'.format(
-            self.pattern,
-            self.message
+    """ Handles progress updates for Operations """
+
+    def __init__(self, msg=None):
+        self.msg = msg if msg else 'Doing operation'
+        self.current_percent = 0
+
+    def update(self, percent=None):
+        if percent:
+            self.current_percent = percent
+
+    def done(self, unused_arg=None):
+        self.current_percent = 0
+
+    def set_msg(self, s):
+        self.msg = s
+
+
+class SimpleFetchProgress(
+        apt.progress.text.AcquireProgress, apt.progress.text.OpProgress):
+    """ Handles progress updates for Fetches """
+
+    def __init__(self, msg=None):
+        self.msg = msg if msg else 'Fetching'
+        apt.progress.text.OpProgress.__init__(self)
+        apt.progress.text.AcquireProgress.__init__(self)
+
+    def _write(self, msg, newline=True, maximize=False):
+        """ Write the message on the terminal, fill remaining space. """
+        self._file.write('\r')
+        self._file.write(msg)
+        msglen = len(strip_codes(msg))
+        # Fill remaining stuff with whitespace
+        if self._width > msglen:
+            self._file.write((self._width - msglen) * ' ')
+        elif maximize:  # Needed for OpProgress.
+            self._width = max(self._width, msglen)
+        if newline:
+            self._file.write('\n')
+        else:
+            self._file.flush()
+
+    def fail(self, item):
+        """ Called when an item is failed. """
+        apt.progress.base.AcquireProgress.fail(self, item)
+        if item.owner.status == item.owner.STAT_DONE:
+            self._write(' '.join((
+                str(C(_('Ign'), fore='yellow')),
+                item.description)
+            ))
+        else:
+            self._write(' '.join((
+                str(C(_('Err'), fore='red')),
+                item.description)
+            ))
+            if item.owner.error_text:
+                self._write(
+                    ' {}'.format(str(C(item.owner.error_text, fore='red')))
+                )
+
+    def fetch(self, item):
+        """ Called when some of the item's data is fetched. """
+        apt.progress.base.AcquireProgress.fetch(self, item)
+        # It's complete already (e.g. Hit)
+        if item.owner.complete:
+            return
+        item.owner.id = self._id
+        self._id += 1
+        line = '{}{} {}'.format(
+            C(_('Get:'), fore='lightblue'),
+            C(item.owner.id, fore='blue', style='bright'),
+            C(item.description, fore='green')
         )
 
+        if item.owner.filesize:
+            line += ''.join((' ', self.format_filesize(item.owner.filesize)))
 
-class CacheNotLoaded(Exception):
-    pass
+        self._write(line)
+
+    @staticmethod
+    def format_filesize(filesize):
+        """ Format/colorize a file size. """
+
+        sizeraw = apt_pkg.size_to_str(filesize).split()
+        if len(sizeraw) == 1:
+            size = sizeraw[0]
+            multiplier = ''
+        else:
+            size, multiplier = sizeraw
+
+        return '[{} {}]'.format(
+            C(size, fore='blue'),
+            C(''.join((multiplier, 'B')), fore='lightblue')
+        )
+
+    def ims_hit(self, item):
+        """Called when an item is update (e.g. not modified on the server)."""
+        apt.progress.base.AcquireProgress.ims_hit(self, item)
+        line = ' '.join((
+            str(C(_('Hit'), fore='green')),
+            item.description
+        ))
+        if item.owner.filesize:
+            line += ''.join((' ', self.format_filesize(item.owner.filesize)))
+        self._write(line)
+
+    def start(self):
+        print_status(self.msg)
+
+    def stop(self):
+        print_status('\nFinished ' + self.msg)
+
+    def set_msg(self, s):
+        self.msg = s
+
+
+class SimpleInstallProgress(apt.progress.base.InstallProgress):
+
+    """ Handles progress updates for Installs """
+
+    def __init__(self, msg=None, pkgname=None):
+        self.msg = msg if msg else 'Installing'
+        self.pkgname = pkgname if pkgname else None
+
+        apt.progress.base.InstallProgress.__init__(self)
+        # Redirect dpkg's messages to stdout.
+        self.writefd = sys.stdout
+
+    def error(self, pkg, errormsg):
+        """ Handles errors from dpkg. """
+
+        print_err(
+            '\nError while installing: {}\n{}'.format(pkg.name, errormsg)
+        )
+
+    def finish_update(self):
+        """ Handles end of installation """
+
+        if self.pkgname:
+            print_status(
+                '\nFinished {}: {}'.format(self.msg.lower(), self.pkgname)
+            )
 
 
 # custom progress reporters
